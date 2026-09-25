@@ -15,19 +15,17 @@
     }
   </style>
 </head>
-<body class="min-h-screen text-slate-800 pb-12">
-
-  <!-- ヘッダー -->
-  <header class="bg-gradient-to-r from-pink-500 to-rose-500 text-white py-4 px-5 shadow-sm sticky top-0 z-20">
+<body class="min  <!-- ヘッダー -->
+  <header class="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white py-4 px-5 shadow-sm sticky top-0 z-20">
     <div class="max-w-md mx-auto">
       <h1 class="text-base font-bold tracking-tight">商品サンプル紹介 申請フォーム</h1>
-      <p class="text-xs text-pink-100 mt-0.5">紹介したい商品の詳細（色・サイズ等）をご指定ください</p>
+      <p class="text-xs text-blue-200 mt-0.5">紹介したい商品の詳細（色・サイズ等）をご指定ください</p>
     </div>
   </header>
 
   <!-- ローディング表示 -->
   <div id="loading" class="flex flex-col items-center justify-center py-24 space-y-4">
-    <div class="w-10 h-10 border-4 border-pink-400 border-t-transparent rounded-full animate-spin"></div>
+    <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
     <p class="text-sm text-slate-500 font-medium" id="loading-text">LINE認証中...</p>
   </div>
 
@@ -52,7 +50,7 @@
           <p id="user-name" class="font-bold text-sm text-slate-800">読み込み中...</p>
         </div>
       </div>
-      <div id="group-badge" class="hidden text-[11px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2.5 py-1 rounded-full font-medium">
+      <div id="group-badge" class="hidden text-[11px] bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-full font-medium">
         グループ連携中
       </div>
     </div>
@@ -62,8 +60,8 @@
       <!-- セクション1: 商品情報 & 詳細指定 -->
       <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3.5">
         <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
-          <span class="w-2 h-2 rounded-full bg-pink-500"></span>
-          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">紹介したい商品 & 詳細</h2>
+          <span class="w-2 h-2 rounded-full bg-blue-900"></span>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-600">紹介したい商品 & 詳細</h2>
         </div>
 
         <div>
@@ -71,7 +69,7 @@
             商品名 または 商品リンク <span class="text-rose-500">*</span>
           </label>
           <input type="text" id="product_name" required placeholder="例: 美白美容液30ml、またはTikTok Shop商品URL"
-                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
         </div>
 
         <!-- 商品詳細: カラー & サイズ -->
@@ -80,22 +78,22 @@
             <label class="block text-xs font-semibold text-slate-700 mb-1">
               希望カラー / バリエーション
             </label>
-            <input type="text" id="product_color" placeholder="例: ピンク, 01番 (第2希望: 白)"
-                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+            <input type="text" id="product_color" placeholder="例: ネイビー, 01番 (第2希望: 白)"
+                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">
               希望サイズ
             </label>
             <input type="text" id="product_size" placeholder="例: M, L, フリー"
-                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
           </div>
         </div>
 
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">数量</label>
           <input type="number" id="product_qty" value="1" min="1" max="10"
-                 class="w-24 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+                 class="w-24 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
         </div>
 
         <!-- 商品詳細の自由記述欄 -->
@@ -104,41 +102,41 @@
             商品詳細・ご要望（任意）
           </label>
           <textarea id="product_details" rows="2" placeholder="例: 色の第2希望、肌質タイプ指定、セット商品の内訳、アパレルの丈感指定などがあればご記入ください"
-                    class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50"></textarea>
+                    class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50"></textarea>
         </div>
       </div>
 
       <!-- セクション2: クリエイター情報 & 氏名 -->
       <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3.5">
         <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
-          <span class="w-2 h-2 rounded-full bg-pink-500"></span>
-          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">クリエイター情報</h2>
+          <span class="w-2 h-2 rounded-full bg-blue-900"></span>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-600">クリエイター情報</h2>
         </div>
 
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">クリエイターID (TikTokアカウント名) <span class="text-rose-500">*</span></label>
           <input type="text" id="creator_id" required placeholder="例: @tiktok_hanako"
-                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
         </div>
 
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">氏名 (本名) <span class="text-rose-500">*</span></label>
           <input type="text" id="real_name" required placeholder="例: 山田 花子"
-                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
         </div>
       </div>
 
       <!-- セクション3: お届け先住所の確認（チェックボックス） -->
       <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3">
         <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
-          <span class="w-2 h-2 rounded-full bg-pink-500"></span>
-          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">お届け先住所の確認</h2>
+          <span class="w-2 h-2 rounded-full bg-blue-900"></span>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-600">お届け先住所の確認</h2>
         </div>
 
-        <div class="bg-amber-50 border border-amber-200/70 rounded-xl p-3.5">
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
           <label class="flex items-start space-x-3 cursor-pointer">
             <input type="checkbox" id="address_confirmed" checked
-                   class="mt-0.5 w-5 h-5 rounded text-pink-600 focus:ring-pink-500 border-slate-300">
+                   class="mt-0.5 w-5 h-5 rounded text-blue-900 focus:ring-blue-900 border-slate-300">
             <div class="text-xs text-slate-700 leading-snug">
               <span class="font-bold text-slate-900 block mb-0.5">登録済みのお届け先住所に変更はありません</span>
               ※住所に変更がある方、または初めて依頼される方はチェックを外してください。個別チャットにて住所をお伺いいたします。
@@ -150,7 +148,7 @@
       <!-- 送信ボタン -->
       <div class="pt-2">
         <button type="submit" id="submit-btn"
-                class="w-full py-3.5 bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-base rounded-2xl shadow-lg shadow-pink-500/30 active:scale-[0.99] transition-all">
+                class="w-full py-3.5 bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 hover:from-black hover:to-blue-900 text-white font-bold text-base rounded-2xl shadow-lg shadow-blue-950/25 active:scale-[0.99] transition-all">
           この内容で申請する
         </button>
       </div>
@@ -159,9 +157,8 @@
 
     <p class="text-[11px] text-slate-400 text-center leading-relaxed px-4">
       ※ご入力いただいた内容をもとに店舗へサンプル発送を手配いたします。
-    </p>
-
   </main>
+
 
   <!-- 送信完了画面 -->
   <div id="success-screen" class="hidden max-w-md mx-auto px-6 py-16 text-center space-y-4">
