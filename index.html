@@ -14,12 +14,13 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
   </style>
-</head>
-<body class="min  <!-- ヘッダー -->
-  <header class="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white py-4 px-5 shadow-sm sticky top-0 z-20">
+<body class="min-h-screen text-slate-800 pb-12">
+
+  <!-- ヘッダー (ネイビーブルー) -->
+  <header style="background: linear-gradient(135deg, #172554 0%, #1e3a8a 100%);" class="text-white py-4 px-5 shadow-md sticky top-0 z-20">
     <div class="max-w-md mx-auto">
       <h1 class="text-base font-bold tracking-tight">商品サンプル紹介 申請フォーム</h1>
-      <p class="text-xs text-blue-200 mt-0.5">紹介したい商品の詳細（色・サイズ等）をご指定ください</p>
+      <p class="text-xs text-blue-100 mt-0.5">紹介したい商品の詳細（色・サイズ等）をご指定ください</p>
     </div>
   </header>
 
@@ -148,7 +149,8 @@
       <!-- 送信ボタン -->
       <div class="pt-2">
         <button type="submit" id="submit-btn"
-                class="w-full py-3.5 bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 hover:from-black hover:to-blue-900 text-white font-bold text-base rounded-2xl shadow-lg shadow-blue-950/25 active:scale-[0.99] transition-all">
+                style="background: linear-gradient(135deg, #1e3a8a 0%, #172554 100%);"
+                class="w-full py-3.5 text-white font-bold text-base rounded-2xl shadow-lg shadow-blue-900/30 active:scale-[0.99] transition-all hover:opacity-95">
           この内容で申請する
         </button>
       </div>
