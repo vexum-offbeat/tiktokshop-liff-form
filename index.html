@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -182,9 +182,10 @@
 
   <script>
     // ==========================================
-    // LIFF_IDはGAS(Code.gs)のスクリプトプロパティから自動注入されます
+    // 設定項目
     // ==========================================
-    const LIFF_ID = "__LIFF_ID__";
+    const LIFF_ID = "2011742602-wOuLBR5Z";
+    const GAS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbxd1kk9tMCLJFuYZqaHwTk6ugFCYh259k7rtYljO9cQfvP5G7Uh4uu0G-qCmSKun2If/exec";
 
     let contextData = {
       userId: "",
@@ -282,8 +283,16 @@
               .submitShippingRequest(payload);
           });
         } else {
-          // ローカルでの動作確認用デモモード
-          await new Promise(r => setTimeout(r, 1000));
+          // GitHub Pages から GAS への送信
+          const res = await fetch(GAS_ENDPOINT_URL, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(payload)
+          });
+          const result = await res.json();
+          if (!result.success) {
+            throw new Error(result.message || "送信に失敗しました");
+          }
         }
 
         document.getElementById("app").classList.add("hidden");
