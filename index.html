@@ -1,0 +1,307 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>商品サンプル発送・紹介受付フォーム</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- LINE LIFF SDK -->
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      background-color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-800 pb-12">
+
+  <!-- ヘッダー -->
+  <header class="bg-gradient-to-r from-pink-500 to-rose-500 text-white py-4 px-5 shadow-sm sticky top-0 z-20">
+    <div class="max-w-md mx-auto">
+      <h1 class="text-base font-bold tracking-tight">商品サンプル紹介 申請フォーム</h1>
+      <p class="text-xs text-pink-100 mt-0.5">紹介したい商品の詳細（色・サイズ等）をご指定ください</p>
+    </div>
+  </header>
+
+  <!-- ローディング表示 -->
+  <div id="loading" class="flex flex-col items-center justify-center py-24 space-y-4">
+    <div class="w-10 h-10 border-4 border-pink-400 border-t-transparent rounded-full animate-spin"></div>
+    <p class="text-sm text-slate-500 font-medium" id="loading-text">LINE認証中...</p>
+  </div>
+
+  <!-- エラー表示 -->
+  <div id="error-box" class="hidden max-w-md mx-auto p-4 m-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+    <div class="font-bold flex items-center gap-1.5">
+      <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      エラーが発生しました
+    </div>
+    <p id="error-message" class="mt-1 text-xs text-red-500"></p>
+  </div>
+
+  <!-- メインコンテンツ -->
+  <main id="app" class="hidden max-w-md mx-auto px-4 mt-4 space-y-4">
+
+    <!-- ユーザー挨拶カード -->
+    <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <img id="user-picture" src="https://via.placeholder.com/48" alt="Profile" class="w-10 h-10 rounded-full object-cover border border-slate-200">
+        <div>
+          <p class="text-[11px] text-slate-400">ログイン中アカウント</p>
+          <p id="user-name" class="font-bold text-sm text-slate-800">読み込み中...</p>
+        </div>
+      </div>
+      <div id="group-badge" class="hidden text-[11px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2.5 py-1 rounded-full font-medium">
+        グループ連携中
+      </div>
+    </div>
+
+    <form id="request-form" class="space-y-4" onsubmit="handleSubmit(event)">
+
+      <!-- セクション1: 商品情報 & 詳細指定 -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3.5">
+        <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
+          <span class="w-2 h-2 rounded-full bg-pink-500"></span>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">紹介したい商品 & 詳細</h2>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            商品名 または 商品リンク <span class="text-rose-500">*</span>
+          </label>
+          <input type="text" id="product_name" required placeholder="例: 美白美容液30ml、またはTikTok Shop商品URL"
+                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+        </div>
+
+        <!-- 商品詳細: カラー & サイズ -->
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">
+              希望カラー / バリエーション
+            </label>
+            <input type="text" id="product_color" placeholder="例: ピンク, 01番 (第2希望: 白)"
+                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">
+              希望サイズ
+            </label>
+            <input type="text" id="product_size" placeholder="例: M, L, フリー"
+                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">数量</label>
+          <input type="number" id="product_qty" value="1" min="1" max="10"
+                 class="w-24 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+        </div>
+
+        <!-- 商品詳細の自由記述欄 -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            商品詳細・ご要望（任意）
+          </label>
+          <textarea id="product_details" rows="2" placeholder="例: 色の第2希望、肌質タイプ指定、セット商品の内訳、アパレルの丈感指定などがあればご記入ください"
+                    class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50"></textarea>
+        </div>
+      </div>
+
+      <!-- セクション2: クリエイター情報 & 氏名 -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3.5">
+        <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
+          <span class="w-2 h-2 rounded-full bg-pink-500"></span>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">クリエイター情報</h2>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">クリエイターID (TikTokアカウント名) <span class="text-rose-500">*</span></label>
+          <input type="text" id="creator_id" required placeholder="例: @tiktok_hanako"
+                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">氏名 (本名) <span class="text-rose-500">*</span></label>
+          <input type="text" id="real_name" required placeholder="例: 山田 花子"
+                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50">
+        </div>
+      </div>
+
+      <!-- セクション3: お届け先住所の確認（チェックボックス） -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3">
+        <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
+          <span class="w-2 h-2 rounded-full bg-pink-500"></span>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">お届け先住所の確認</h2>
+        </div>
+
+        <div class="bg-amber-50 border border-amber-200/70 rounded-xl p-3.5">
+          <label class="flex items-start space-x-3 cursor-pointer">
+            <input type="checkbox" id="address_confirmed" checked
+                   class="mt-0.5 w-5 h-5 rounded text-pink-600 focus:ring-pink-500 border-slate-300">
+            <div class="text-xs text-slate-700 leading-snug">
+              <span class="font-bold text-slate-900 block mb-0.5">登録済みのお届け先住所に変更はありません</span>
+              ※住所に変更がある方、または初めて依頼される方はチェックを外してください。個別チャットにて住所をお伺いいたします。
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- 送信ボタン -->
+      <div class="pt-2">
+        <button type="submit" id="submit-btn"
+                class="w-full py-3.5 bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-bold text-base rounded-2xl shadow-lg shadow-pink-500/30 active:scale-[0.99] transition-all">
+          この内容で申請する
+        </button>
+      </div>
+
+    </form>
+
+    <p class="text-[11px] text-slate-400 text-center leading-relaxed px-4">
+      ※ご入力いただいた内容をもとに店舗へサンプル発送を手配いたします。
+    </p>
+
+  </main>
+
+  <!-- 送信完了画面 -->
+  <div id="success-screen" class="hidden max-w-md mx-auto px-6 py-16 text-center space-y-4">
+    <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+    </div>
+    <h2 class="text-xl font-bold text-slate-800">申請を受け付けました！</h2>
+    <p class="text-sm text-slate-600 leading-relaxed" id="success-message">
+      店舗へ商品詳細を共有し、発送手配を進めます。<br>
+      住所の確認が必要な場合は、個別LINEにてご連絡いたします。
+    </p>
+    <div class="pt-4">
+      <button onclick="liff.closeWindow()" class="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl">
+        閉じる
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // LIFF_IDはGAS(Code.gs)のスクリプトプロパティから自動注入されます
+    // ==========================================
+    const LIFF_ID = "__LIFF_ID__";
+
+    let contextData = {
+      userId: "",
+      displayName: "",
+      pictureUrl: "",
+      groupId: "",
+      type: ""
+    };
+
+    // 画面初期化
+    window.addEventListener("DOMContentLoaded", async () => {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        contextData.userId = profile.userId;
+        contextData.displayName = profile.displayName;
+        contextData.pictureUrl = profile.pictureUrl || "https://via.placeholder.com/48";
+
+        const context = liff.getContext();
+        if (context) {
+          contextData.type = context.type;
+          contextData.groupId = context.groupId || "";
+          if (contextData.groupId) {
+            document.getElementById("group-badge").classList.remove("hidden");
+          }
+        }
+
+        document.getElementById("user-name").textContent = contextData.displayName;
+        document.getElementById("user-picture").src = contextData.pictureUrl;
+
+        // URLパラメータからの商品名補完
+        const urlParams = new URLSearchParams(window.location.search);
+        const paramProduct = urlParams.get("product") || urlParams.get("product_name");
+        if (paramProduct) {
+          document.getElementById("product_name").value = paramProduct;
+        }
+
+        const paramGroup = urlParams.get("groupId") || urlParams.get("group");
+        if (paramGroup && !contextData.groupId) {
+          contextData.groupId = paramGroup;
+        }
+
+        document.getElementById("loading").classList.add("hidden");
+        document.getElementById("app").classList.remove("hidden");
+
+      } catch (err) {
+        showError("LIFFの初期化に失敗しました: " + err.message);
+      }
+    });
+
+    // フォーム送信
+    async function handleSubmit(e) {
+      e.preventDefault();
+
+      const submitBtn = document.getElementById("submit-btn");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "送信中...";
+      submitBtn.classList.add("opacity-60", "cursor-not-allowed");
+
+      const payload = {
+        userId: contextData.userId,
+        lineDisplayName: contextData.displayName,
+        groupId: contextData.groupId,
+        contextType: contextData.type,
+
+        // 商品詳細
+        productName: document.getElementById("product_name").value.trim(),
+        productColor: document.getElementById("product_color").value.trim(),
+        productSize: document.getElementById("product_size").value.trim(),
+        productQty: document.getElementById("product_qty").value.trim(),
+        productDetails: document.getElementById("product_details").value.trim(),
+
+        // クリエイター情報
+        creatorId: document.getElementById("creator_id").value.trim(),
+        realName: document.getElementById("real_name").value.trim(),
+        addressConfirmed: document.getElementById("address_confirmed").checked
+      };
+
+      try {
+        if (typeof google !== "undefined" && google.script && google.script.run) {
+          // GASから配信されている場合はgoogle.script.runで直接実行
+          await new Promise((resolve, reject) => {
+            google.script.run
+              .withSuccessHandler((res) => {
+                if (res && res.success) resolve(res);
+                else reject(new Error(res ? res.message : "送信に失敗しました"));
+              })
+              .withFailureHandler((err) => reject(err))
+              .submitShippingRequest(payload);
+          });
+        } else {
+          // ローカルでの動作確認用デモモード
+          await new Promise(r => setTimeout(r, 1000));
+        }
+
+        document.getElementById("app").classList.add("hidden");
+        document.getElementById("success-screen").classList.remove("hidden");
+
+      } catch (err) {
+        alert("エラーが発生しました: " + err.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = "この内容で申請する";
+        submitBtn.classList.remove("opacity-60", "cursor-not-allowed");
+      }
+    }
+
+    function showError(msg) {
+      document.getElementById("loading").classList.add("hidden");
+      document.getElementById("error-box").classList.remove("hidden");
+      document.getElementById("error-message").textContent = msg;
+    }
+  </script>
+</body>
+</html>
