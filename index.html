@@ -16,8 +16,8 @@
   </style>
 <body class="min-h-screen text-slate-800 pb-12">
 
-  <!-- ヘッダー (ネイビーブルー) -->
-  <header style="background: linear-gradient(135deg, #172554 0%, #1e3a8a 100%);" class="text-white py-4 px-5 shadow-md sticky top-0 z-20">
+  <!-- ヘッダー (ボタンと同一の美しいネイビーグラデーション) -->
+  <header style="background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 45%, #0f172a 100%);" class="text-white py-4 px-5 shadow-lg shadow-blue-950/20 sticky top-0 z-20">
     <div class="max-w-md mx-auto">
       <h1 class="text-base font-bold tracking-tight">商品サンプル紹介 申請フォーム</h1>
       <p class="text-xs text-blue-100 mt-0.5">紹介したい商品の詳細（色・サイズ等）をご指定ください</p>
@@ -58,53 +58,64 @@
 
     <form id="request-form" class="space-y-4" onsubmit="handleSubmit(event)">
 
-      <!-- セクション1: 商品情報 & 詳細指定 -->
-      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3.5">
-        <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
-          <span class="w-2 h-2 rounded-full bg-blue-900"></span>
-          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-600">紹介したい商品 & 詳細</h2>
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">
-            商品名 または 商品リンク <span class="text-rose-500">*</span>
-          </label>
-          <input type="text" id="product_name" required placeholder="例: 美白美容液30ml、またはTikTok Shop商品URL"
-                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
-        </div>
-
-        <!-- 商品詳細: カラー & サイズ -->
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">
-              希望カラー / バリエーション
-            </label>
-            <input type="text" id="product_color" placeholder="例: ネイビー, 01番 (第2希望: 白)"
-                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
+      <!-- セクション1: 紹介したい商品 (複数追加可能) -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between px-1">
+          <div class="flex items-center space-x-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-blue-900"></span>
+            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700">紹介したい商品</h2>
           </div>
-          <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">
-              希望サイズ
-            </label>
-            <input type="text" id="product_size" placeholder="例: M, L, フリー"
-                   class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
+          <span class="text-[11px] text-slate-500 font-medium" id="product-count-badge">計 1 点</span>
+        </div>
+
+        <!-- 商品カード一覧コンテナ -->
+        <div id="products-container" class="space-y-3">
+          <!-- 初回商品カード (JavaScriptから動的生成、または初期HTML) -->
+          <div class="product-card bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3 relative transition-all" data-index="1">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+              <span class="product-badge text-xs font-bold text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg">
+                商品 1
+              </span>
+              <button type="button" onclick="removeProductCard(this)" class="remove-btn hidden text-xs text-rose-500 hover:text-rose-700 font-medium py-1 px-2 rounded-lg hover:bg-rose-50 transition-colors">
+                削除
+              </button>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">
+                商品名 <span class="text-rose-500">*</span>
+              </label>
+              <input type="text" class="prod-name w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" required placeholder="例: 美白美容液 30ml">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">
+                商品リンク / URL <span class="text-[11px] text-slate-400 font-normal">（任意）</span>
+              </label>
+              <input type="text" class="prod-url w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" placeholder="例: https://vt.tiktok.com/... または 商品ページURL">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">
+                希望バリエーション <span class="text-[11px] text-slate-400 font-normal">（カラー・サイズ・型番など）</span>
+              </label>
+              <input type="text" class="prod-variation w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" placeholder="例: カラー: ネイビー / サイズ: M / 01番 など">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">
+                商品詳細・ご要望 <span class="text-[11px] text-slate-400 font-normal">（任意）</span>
+              </label>
+              <textarea class="prod-details w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" rows="2" placeholder="例: 第2希望カラー、アパレルの丈感、セットの内訳など"></textarea>
+            </div>
           </div>
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">数量</label>
-          <input type="number" id="product_qty" value="1" min="1" max="10"
-                 class="w-24 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50">
-        </div>
-
-        <!-- 商品詳細の自由記述欄 -->
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">
-            商品詳細・ご要望（任意）
-          </label>
-          <textarea id="product_details" rows="2" placeholder="例: 色の第2希望、肌質タイプ指定、セット商品の内訳、アパレルの丈感指定などがあればご記入ください"
-                    class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50"></textarea>
-        </div>
+        <!-- ＋ 商品を追加するボタン -->
+        <button type="button" onclick="addProductCard()" class="w-full py-3 border-2 border-dashed border-blue-900/30 hover:border-blue-900/60 bg-blue-50/50 hover:bg-blue-50 text-blue-950 font-bold text-xs rounded-2xl flex items-center justify-center space-x-1.5 transition-all">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+          <span>別の商品を追加する</span>
+        </button>
       </div>
 
       <!-- セクション2: クリエイター情報 & 氏名 -->
@@ -149,7 +160,7 @@
       <!-- 送信ボタン -->
       <div class="pt-2">
         <button type="submit" id="submit-btn"
-                style="background: linear-gradient(135deg, #1e3a8a 0%, #172554 100%);"
+                style="background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 45%, #0f172a 100%);"
                 class="w-full py-3.5 text-white font-bold text-base rounded-2xl shadow-lg shadow-blue-900/30 active:scale-[0.99] transition-all hover:opacity-95">
           この内容で申請する
         </button>
@@ -241,6 +252,85 @@
       }
     });
 
+    // 複数商品の動的追加・削除
+    function addProductCard() {
+      const container = document.getElementById("products-container");
+      const card = document.createElement("div");
+      card.className = "product-card bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3 relative transition-all";
+      card.innerHTML = `
+        <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+          <span class="product-badge text-xs font-bold text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg">
+            商品
+          </span>
+          <button type="button" onclick="removeProductCard(this)" class="remove-btn text-xs text-rose-500 hover:text-rose-700 font-medium py-1 px-2 rounded-lg hover:bg-rose-50 transition-colors">
+            削除
+          </button>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            商品名 <span class="text-rose-500">*</span>
+          </label>
+          <input type="text" class="prod-name w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" required placeholder="例: 美白美容液 30ml">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            商品リンク / URL <span class="text-[11px] text-slate-400 font-normal">（任意）</span>
+          </label>
+          <input type="text" class="prod-url w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" placeholder="例: https://vt.tiktok.com/... または 商品ページURL">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            希望バリエーション <span class="text-[11px] text-slate-400 font-normal">（カラー・サイズ・型番など）</span>
+          </label>
+          <input type="text" class="prod-variation w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" placeholder="例: カラー: ネイビー / サイズ: M / 01番 など">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            商品詳細・ご要望 <span class="text-[11px] text-slate-400 font-normal">（任意）</span>
+          </label>
+          <textarea class="prod-details w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50" rows="2" placeholder="例: 第2希望カラー、アパレルの丈感、セットの内訳など"></textarea>
+        </div>
+      `;
+      container.appendChild(card);
+      updateProductCardsUI();
+
+      // 新しく追加されたカードの商品名入力欄にスムーズにスクロール
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.querySelector('.prod-name').focus();
+    }
+
+    function removeProductCard(btn) {
+      const card = btn.closest(".product-card");
+      if (card) {
+        card.remove();
+        updateProductCardsUI();
+      }
+    }
+
+    function updateProductCardsUI() {
+      const cards = document.querySelectorAll(".product-card");
+      const count = cards.length;
+      document.getElementById("product-count-badge").textContent = `計 ${count} 点`;
+
+      cards.forEach((card, idx) => {
+        const badge = card.querySelector(".product-badge");
+        if (badge) badge.textContent = `商品 ${idx + 1}`;
+
+        const removeBtn = card.querySelector(".remove-btn");
+        if (removeBtn) {
+          if (count > 1) {
+            removeBtn.classList.remove("hidden");
+          } else {
+            removeBtn.classList.add("hidden");
+          }
+        }
+      });
+    }
+
     // フォーム送信
     async function handleSubmit(e) {
       e.preventDefault();
@@ -250,18 +340,51 @@
       submitBtn.textContent = "送信中...";
       submitBtn.classList.add("opacity-60", "cursor-not-allowed");
 
+      // 各商品カードからデータを収集
+      const cards = document.querySelectorAll(".product-card");
+      const products = [];
+
+      cards.forEach(card => {
+        const name = card.querySelector(".prod-name").value.trim();
+        const url = card.querySelector(".prod-url").value.trim();
+        const variation = card.querySelector(".prod-variation").value.trim();
+        const details = card.querySelector(".prod-details").value.trim();
+
+        if (name) {
+          products.push({
+            name: name,
+            url: url,
+            variation: variation,
+            details: details
+          });
+        }
+      });
+
+      if (products.length === 0) {
+        alert("少なくとも1点以上の商品名を入力してください。");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "この内容で申請する";
+        submitBtn.classList.remove("opacity-60", "cursor-not-allowed");
+        return;
+      }
+
+      // 互換性のため代表値もセット
+      const primaryProduct = products[0];
       const payload = {
         userId: contextData.userId,
         lineDisplayName: contextData.displayName,
         groupId: contextData.groupId,
         contextType: contextData.type,
 
-        // 商品詳細
-        productName: document.getElementById("product_name").value.trim(),
-        productColor: document.getElementById("product_color").value.trim(),
-        productSize: document.getElementById("product_size").value.trim(),
-        productQty: document.getElementById("product_qty").value.trim(),
-        productDetails: document.getElementById("product_details").value.trim(),
+        // 複数商品配列
+        products: products,
+
+        // 単体用フィールド（互換性担保）
+        productName: products.map(p => p.name).join(" / "),
+        productColor: primaryProduct.variation || "",
+        productSize: "",
+        productQty: products.length,
+        productDetails: products.map((p, i) => `【商品${i+1}: ${p.name}】` + (p.url ? ` URL: ${p.url}` : '') + (p.variation ? ` バリエ: ${p.variation}` : '') + (p.details ? ` 備考: ${p.details}` : '')).join("\n"),
 
         // クリエイター情報
         creatorId: document.getElementById("creator_id").value.trim(),
