@@ -6,32 +6,23 @@
 
 // ====================================================================
 // 設定はGASの「スクリプトプロパティ」に登録してください
-// (プロジェクトの設定 > スクリプトプロパティ > 行を追加)
-//
-// プロパティ名             値
-// SPREADSHEET_ID       スプレッドシートのID
-// LIFF_ID              LINE DevelopersのLIFF ID
-// LINE_CHANNEL_TOKEN   LINEチャネルアクセストークン（長期）
-// AFFILIATE_URL        自社アフィリエイトリンク
+// SPREADSHEET_ID, LINE_CHANNEL_TOKEN, LIFF_ID, AFFILIATE_URL
 // ====================================================================
 function getConfig() {
   const props = PropertiesService.getScriptProperties();
   return {
     SPREADSHEET_ID:            props.getProperty("SPREADSHEET_ID") || "10v-c76tg20i5sSzIM6T7-QQ7kTNLPiNOZhvF0A8NDVg",
     LINE_CHANNEL_ACCESS_TOKEN: props.getProperty("LINE_CHANNEL_TOKEN") || "",
-    SHEET_NAME_PENDING:        props.getProperty("SHEET_NAME_PENDING")     || "承認待ちシート",
-    SHEET_NAME_CREATOR_DB:     props.getProperty("SHEET_NAME_CREATOR_DB")  || "クリエイターDB",
-    SHEET_NAME_SHIPPING:       props.getProperty("SHEET_NAME_SHIPPING")    || "配送シート",
-    SHEET_NAME_ADDRESS:        props.getProperty("SHEET_NAME_ADDRESS")     || "クリエイター・代理店サンプルリスト",
-    SHEET_NAME_SHOP_MASTER:    props.getProperty("SHEET_NAME_SHOP_MASTER") || "店舗発送依頼先情報",
+    SHEET_NAME_PENDING:        props.getProperty("SHEET_NAME_PENDING")     || "\u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8",
+    SHEET_NAME_CREATOR_DB:     props.getProperty("SHEET_NAME_CREATOR_DB")  || "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcDB",
+    SHEET_NAME_SHIPPING:       props.getProperty("SHEET_NAME_SHIPPING")    || "\u914d\u9001\u30b7\u30fc\u30c8",
+    SHEET_NAME_ADDRESS:        props.getProperty("SHEET_NAME_ADDRESS")     || "\u30af\u30ea\u30a8\u30a4\u30bf\u30fc\u30fb\u4ee3\u7406\u5e97\u30b5\u30f3\u30d7\u30eb\u30ea\u30b9\u30c8",
+    SHEET_NAME_SHOP_MASTER:    props.getProperty("SHEET_NAME_SHOP_MASTER") || "\u5e97\u8217\u767a\u9001\u4f9d\u983c\u5148\u60c5\u5831",
     AFFILIATE_INFO_TEXT:       props.getProperty("AFFILIATE_URL") || "",
-    APPROVAL_COL: 13   // M列: チェックボックス承認列（1始まり）
+    APPROVAL_COL: 13   // M\u5217: \u30c1\u30a7\u30c3\u30af\u30dc\u30c3\u30af\u30b9\u627f\u8a8d\u5217\uff081\u59cb\u307e\u308a\uff09
   };
 }
 
-/**
- * 対象スプレッドシートを取得
- */
 function getSpreadsheet() {
   const cfg = getConfig();
   if (cfg.SPREADSHEET_ID && cfg.SPREADSHEET_ID.trim()) {
@@ -45,32 +36,23 @@ function getSpreadsheet() {
 }
 
 // =============================================
-// LIFFフォーム表示・送信処理
+// LIFF\u30d5\u30a9\u30fc\u30e0\u8868\u793a\u30fb\u9001\u4fe1\u51e6\u7406
 // =============================================
 
-/**
- * GETリクエスト: LIFFフォーム画面の表示
- */
 function doGet(e) {
   const liffId = PropertiesService.getScriptProperties().getProperty("LIFF_ID") || "";
   const html = HtmlService.createHtmlOutputFromFile("index")
-    .setTitle("商品サンプル発送・紹介受付フォーム")
+    .setTitle("\u5546\u54c1\u30b5\u30f3\u30d7\u30eb\u767a\u9001\u30fb\u7d39\u4ecb\u53d7\u4ed8\u30d5\u30a9\u30fc\u30e0")
     .addMetaTag("viewport", "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   html.setContent(html.getContent().replace("__LIFF_ID__", liffId));
   return html;
 }
 
-/**
- * LIFFフォームから直接呼び出す処理 (google.script.run 対応)
- */
 function submitShippingRequest(data) {
   return processRequestData(data);
 }
 
-/**
- * POSTリクエスト処理 (外部fetchからの送信用)
- */
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
@@ -83,40 +65,33 @@ function doPost(e) {
 }
 
 // =============================================
-// フォーム送信処理（クリエイターDB + 承認待ちシートに書くだけで止まる）
+// \u30d5\u30a9\u30fc\u30e0\u9001\u4fe1\u51e6\u7406\uff08\u30af\u30ea\u30a8\u30a4\u30bf\u30fcDB + \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306b\u66f8\u304f\u3060\u3051\u3067\u6b62\u307e\u308b\uff09
 // =============================================
 
-/**
- * 発送リクエスト共通処理
- * フォーム送信 → クリエイターDB（永久保存）+ 承認待ちシートに書き込んで止まる
- * 転記処理は担当者の承認（チェックボックス）後に行う
- */
 function processRequestData(data) {
   try {
     const ss = getSpreadsheet();
 
-    // 1. 店舗情報を取得（グループIDから）
     const shopInfo = resolveShopInfo(ss, data.groupId);
     data.shopName          = shopInfo.shopName;
     data.shopNotifyGroupId = shopInfo.notifyGroupId;
     data.shopSheetUrl      = shopInfo.shopSheetUrl;
 
-    // 管理番号を生成
     const requestId = "REQ-" + Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyyMMdd-HHmmss")
                       + "-" + Math.floor(Math.random() * 1000);
     data.requestId = requestId;
 
-    // 2. クリエイターDBシートに永久保存（システムが失敗してもデータが消えない）
+    // \u30af\u30ea\u30a8\u30a4\u30bf\u30fcDB\u306b\u6c38\u4e45\u4fdd\u5b58\uff08\u30d0\u30c3\u30af\u30a2\u30c3\u30d7\uff09
     appendCreatorDB(ss, data);
 
-    // 3. 承認待ちシートに書き込む（ここで止まる）
+    // \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306b\u66f8\u304d\u8fbc\u3093\u3067\u6b62\u307e\u308b
     appendPendingRecords(ss, data);
 
     return {
       success: true,
       shopName: data.shopName,
       action: "pending_approval",
-      message: "申請を受け付けました！担当者が確認後、発送手配いたします。"
+      message: "\u7533\u8acb\u3092\u53d7\u3051\u4ed8\u3051\u307e\u3057\u305f\uff01\u62c5\u5f53\u8005\u304c\u78ba\u8a8d\u5f8c\u3001\u767a\u9001\u624b\u914d\u3044\u3044\u305f\u3057\u307e\u3059\u3002"
     };
 
   } catch (err) {
@@ -126,36 +101,22 @@ function processRequestData(data) {
 }
 
 // =============================================
-// 【インストール可能トリガー】
-// チェックボックスをONにした瞬間に自動起動
+// \u30c1\u30a7\u30c3\u30af\u30dc\u30c3\u30af\u30b9ON\u306b\u3057\u305f\u77ac\u9593\u306b\u81ea\u52d5\u8d77\u52d5\uff08\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb\u53ef\u80fd\u30c8\u30ea\u30ac\u30fc\uff09
 // =============================================
 
-/**
- * 承認チェックボックス編集時に即時起動するトリガー関数
- * setupApprovalTrigger() で1回だけ登録する
- */
 function onApprovalEdit(e) {
   try {
     const cfg   = getConfig();
     const range = e.range;
     const sheet = range.getSheet();
 
-    // 対象シートかチェック
     if (sheet.getName() !== cfg.SHEET_NAME_PENDING) return;
-
-    // 承認チェックボックス列（M列=13）かチェック
     if (range.getColumn() !== cfg.APPROVAL_COL) return;
-
-    // ヘッダー行は除外
     if (range.getRow() <= 1) return;
-
-    // チェックがONになった場合のみ処理
     if (e.value !== "TRUE") return;
 
     const row = range.getRow();
     const ss  = getSpreadsheet();
-
-    // 同じ管理番号の行をまとめて処理（同一申請の複数商品対応）
     const requestId = sheet.getRange(row, 2).getValue();
     if (!requestId) return;
 
@@ -166,68 +127,46 @@ function onApprovalEdit(e) {
   }
 }
 
-/**
- * 承認された申請の転記・通知処理
- * @param {Spreadsheet} ss - スプレッドシート
- * @param {Sheet} pendingSheet - 承認待ちシート
- * @param {string} requestId - 管理番号
- */
 function processApprovedRequest(ss, pendingSheet, requestId) {
   const cfg = getConfig();
 
-  // LockServiceで二重実行防止
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
   } catch (e) {
-    Logger.log("ロック取得失敗（他の処理が実行中）: " + e.toString());
+    Logger.log("Lock failed: " + e.toString());
     return;
   }
 
   try {
     const allData = pendingSheet.getDataRange().getValues();
 
-    // 承認待ちシートの列定義（0始まり）
-    // A=0:受付日時 B=1:管理番号 C=2:店舗名 D=3:クリエイターID E=4:氏名 F=5:住所確認
-    // G=6:商品名 H=7:商品リンク I=8:希望バリエ J=9:商品詳細
-    // K=10:LINE_USER_ID L=11:LINE_GROUP_ID M=12:✅承認 N=13:承認日時 O=14:ステータス P=15:発送シートURL
+    // \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306e\u5217\u5b9a\u7fa9\uff080\u59cb\u307e\u308a\uff09
+    // A=0 B=1:\u7ba1\u7406\u756a\u53f7 C=2:\u5e97\u8217\u540d D=3:ID E=4:\u6c0f\u540d F=5:\u4f4f\u6240\u78ba\u8a8d
+    // G=6:\u5546\u54c1\u540d H=7:\u5546\u54c1URL I=8:\u30d0\u30ea\u30a8 J=9:\u8a73\u7d30
+    // K=10:USER_ID L=11:GROUP_ID M=12:\u2705\u627f\u8a8d N=13:\u627f\u8a8d\u65e5\u6642 O=14:\u30b9\u30c6\u30fc\u30bf\u30b9 P=15:\u767a\u9001\u30b7\u30fc\u30c8URL
     const COL = {
-      requestId:    1,
-      shopName:     2,
-      creatorId:    3,
-      realName:     4,
-      addrCheck:    5,
-      prodName:     6,
-      prodUrl:      7,
-      prodVar:      8,
-      prodDetail:   9,
-      userId:      10,
-      groupId:     11,
-      approval:    12,
-      approvedAt:  13,
-      status:      14,
-      shopUrl:     15
+      requestId:1, shopName:2, creatorId:3, realName:4, addrCheck:5,
+      prodName:6, prodUrl:7, prodVar:8, prodDetail:9,
+      userId:10, groupId:11, approval:12, approvedAt:13, status:14, shopUrl:15
     };
 
-    // 同じ管理番号の行を収集（未転記のもののみ）
     const targetRows = [];
     for (let i = 1; i < allData.length; i++) {
       const rowId = String(allData[i][COL.requestId] || "");
       const st    = String(allData[i][COL.status]    || "");
-      if (rowId === requestId && st !== "転記済" && st !== "処理中") {
+      if (rowId === requestId && st !== "\u8ee2\u8a18\u6e08" && st !== "\u51e6\u7406\u4e2d") {
         targetRows.push({ rowIndex: i + 1, rowData: allData[i] });
       }
     }
 
     if (targetRows.length === 0) {
-      Logger.log("対象行なし（既に処理済みかも）: " + requestId);
+      Logger.log("No target rows for: " + requestId);
       return;
     }
 
-    // まず全行を「処理中」にする（二重処理防止）
-    targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, "処理中..."));
+    targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, "\u51e6\u7406\u4e2d..."));
 
-    // 最初の行からメタ情報を取得（全行で共通）
     const first = targetRows[0].rowData;
     const shopName     = String(first[COL.shopName]  || "");
     const creatorId    = String(first[COL.creatorId] || "");
@@ -237,7 +176,6 @@ function processApprovedRequest(ss, pendingSheet, requestId) {
     const groupId      = String(first[COL.groupId]   || "");
     const shopSheetUrl = String(first[COL.shopUrl]   || "");
 
-    // 商品情報を収集
     const products = targetRows.map(r => ({
       name:      String(r.rowData[COL.prodName]   || ""),
       url:       String(r.rowData[COL.prodUrl]    || ""),
@@ -245,73 +183,59 @@ function processApprovedRequest(ss, pendingSheet, requestId) {
       details:   String(r.rowData[COL.prodDetail] || "")
     }));
 
-    // 住所確認フラグ（"変更なし" を含む場合はtrue）
-    const addressConfirmed = addrCheck.includes("変更なし");
-
-    // 住所検索
+    const addressConfirmed = addrCheck.includes("\u5909\u66f4\u306a\u3057");
     const addressResult = lookupAddress(ss, creatorId, realName, addressConfirmed);
-    if (!addressResult.isFound) {
-      const errMsg = "【要対応】" + addressResult.address;
-      targetRows.forEach(r => {
-        updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
-        pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false); // チェックを戻す
-      });
-      Logger.log("住所なし: " + errMsg);
-      return;
-    }
 
-    // 店舗発送シートURLチェック（なければエラー）
-    if (!shopSheetUrl || shopSheetUrl.trim() === "" || shopSheetUrl === "null") {
-      const errMsg = "【要対応】店舗発送シートURL未設定（F列確認）";
+    if (!addressResult.isFound) {
+      const errMsg = "\u300e\u8981\u5bfe\u5fdc\u300f" + addressResult.address;
       targetRows.forEach(r => {
         updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
         pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false);
       });
-      Logger.log("店舗シートURLなし: " + shopName);
+      Logger.log("Address not found: " + errMsg);
       return;
     }
 
-    // 処理用データオブジェクトを組み立て
+    if (!shopSheetUrl || shopSheetUrl.trim() === "" || shopSheetUrl === "null") {
+      const errMsg = "\u300e\u8981\u5bfe\u5fdc\u300f\u5e97\u8217\u767a\u9001\u30b7\u30fc\u30c8URL\u672a\u8a2d\u5b9a\uff08F\u5217\u78ba\u8a8d\uff09";
+      targetRows.forEach(r => {
+        updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
+        pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false);
+      });
+      Logger.log("No shop sheet URL for: " + shopName);
+      return;
+    }
+
     const data = {
-      shopName:          shopName,
-      shopNotifyGroupId: groupId,
-      shopSheetUrl:      shopSheetUrl,
-      creatorId:         creatorId,
-      realName:          realName,
-      address:           addressResult.address,
-      userId:            userId,
-      requestId:         requestId,
-      products:          products
+      shopName, shopNotifyGroupId: groupId, shopSheetUrl,
+      creatorId, realName, address: addressResult.address,
+      userId, requestId, products
     };
 
-    // 店舗外部発送シートへ転記
     const shopWriteRes = appendToShopExternalSheet(shopSheetUrl, data);
     if (!shopWriteRes || !shopWriteRes.success) {
-      const errMsg = "【要対応】店舗シート書き込み失敗（権限/URL確認）";
+      const errMsg = "\u300e\u8981\u5bfe\u5fdc\u300f\u5e97\u8217\u30b7\u30fc\u30c8\u66f8\u304d\u8fbc\u307f\u5931\u6557\uff08\u6a29\u9650/URL\u78ba\u8a8d\uff09";
       targetRows.forEach(r => {
         updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
         pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false);
       });
-      Logger.log("店舗シート書き込み失敗: " + (shopWriteRes ? shopWriteRes.error : "不明"));
+      Logger.log("Shop sheet write failed: " + (shopWriteRes ? shopWriteRes.error : "unknown"));
       return;
     }
     const shopRowText = shopWriteRes.rowText;
 
-    // 自社配送シートへ転記
     const recordResult = appendShippingRecords(ss, data);
     const rowInfoText  = recordResult.rowText;
 
-    // 店舗LINEグループへ通知
     notifyShopGroup(data, rowInfoText, shopRowText);
 
-    // 承認日時を記録し、ステータスを「転記済」に更新
     const approvedAt = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
     targetRows.forEach(r => {
-      pendingSheet.getRange(r.rowIndex, 14).setValue(approvedAt); // N列: 承認日時
-      updatePendingStatus(pendingSheet, r.rowIndex, "転記済");
+      pendingSheet.getRange(r.rowIndex, 14).setValue(approvedAt);
+      updatePendingStatus(pendingSheet, r.rowIndex, "\u8ee2\u8a18\u6e08");
     });
 
-    Logger.log("承認処理完了: " + requestId + " / 配送シート:" + rowInfoText + " / 店舗シート:" + shopRowText);
+    Logger.log("Approved: " + requestId + " / shipping:" + rowInfoText + " / shop:" + shopRowText);
 
   } finally {
     lock.releaseLock();
@@ -319,22 +243,17 @@ function processApprovedRequest(ss, pendingSheet, requestId) {
 }
 
 // =============================================
-// クリエイターDBシートに永久保存（バックアップ）
+// \u30af\u30ea\u30a8\u30a4\u30bf\u30fcDB\u30b7\u30fc\u30c8\u306b\u6c38\u4e45\u4fdd\u5b58
 // =============================================
 
-/**
- * クリエイターDBシートへの追記
- * フォーム送信のたびに記録し、絶対に削除しない
- * 列: A:受付日時 B:TikTokID C:LINE_USER_ID D:LINE_GROUP_ID E:氏名 F:商品名 G:ブランド H:備考
- */
 function appendCreatorDB(ss, data) {
   const cfg = getConfig();
   let sheet = ss.getSheetByName(cfg.SHEET_NAME_CREATOR_DB);
   if (!sheet) {
     sheet = ss.insertSheet(cfg.SHEET_NAME_CREATOR_DB);
     sheet.appendRow([
-      "受付日時", "TikTok ID", "LINE_USER_ID", "LINE_GROUP_ID",
-      "氏名", "商品名", "ブランド（店舗名）", "備考（商品リンク）"
+      "\u53d7\u4ed8\u65e5\u6642", "TikTok ID", "LINE_USER_ID", "LINE_GROUP_ID",
+      "\u6c0f\u540d", "\u5546\u54c1\u540d", "\u30d6\u30e9\u30f3\u30c9\uff08\u5e97\u8217\u540d\uff09", "\u5099\u8003\uff08\u5546\u54c1\u30ea\u30f3\u30af\uff09"
     ]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, 8)
@@ -345,10 +264,7 @@ function appendCreatorDB(ss, data) {
 
   let products = data.products;
   if (!products || !Array.isArray(products) || products.length === 0) {
-    products = [{
-      name: data.productName || "指定なし",
-      url:  data.productUrl  || ""
-    }];
+    products = [{ name: data.productName || "\u6307\u5b9a\u306a\u3057", url: data.productUrl || "" }];
   }
 
   products.forEach(p => {
@@ -366,44 +282,36 @@ function appendCreatorDB(ss, data) {
 }
 
 // =============================================
-// 承認待ちシートへの書き込み（1商品1行）
+// \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306b\u66f8\u304d\u8fbc\u307f\uff081\u5546\u54c11\u884c\uff09
 // =============================================
 
-/**
- * 承認待ちシートへの追記
- * 列定義:
- * A:受付日時 B:管理番号 C:店舗名 D:クリエイターID E:氏名 F:住所確認
- * G:商品名 H:商品リンク I:希望バリエーション J:商品詳細
- * K:LINE_USER_ID L:LINE_GROUP_ID M:✅承認 N:承認日時 O:ステータス P:発送シートURL
- */
 function appendPendingRecords(ss, data) {
   const cfg = getConfig();
   let sheet = ss.getSheetByName(cfg.SHEET_NAME_PENDING);
   if (!sheet) {
     sheet = ss.insertSheet(cfg.SHEET_NAME_PENDING);
     sheet.appendRow([
-      "受付日時", "管理番号", "店舗名", "クリエイターID", "氏名", "住所確認",
-      "商品名", "商品リンク", "希望バリエーション", "商品詳細・ご要望",
-      "LINE_USER_ID", "LINE_GROUP_ID", "✅承認", "承認日時", "ステータス", "発送シートURL"
+      "\u53d7\u4ed8\u65e5\u6642", "\u7ba1\u7406\u756a\u53f7", "\u5e97\u8217\u540d", "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcID", "\u6c0f\u540d", "\u4f4f\u6240\u78ba\u8a8d",
+      "\u5546\u54c1\u540d", "\u5546\u54c1\u30ea\u30f3\u30af", "\u5e0c\u671b\u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3", "\u5546\u54c1\u8a73\u7d30\u30fb\u3054\u8981\u671b",
+      "LINE_USER_ID", "LINE_GROUP_ID", "\u2705\u627f\u8a8d", "\u627f\u8a8d\u65e5\u6642", "\u30b9\u30c6\u30fc\u30bf\u30b9", "\u767a\u9001\u30b7\u30fc\u30c8URL"
     ]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, 16)
       .setBackground("#1e3a8a").setFontColor("#ffffff").setFontWeight("bold");
-    // M列（承認チェックボックス）に範囲で設定（新規行も自動でチェックボックスになる）
     sheet.getRange("M2:M2000").setDataValidation(
       SpreadsheetApp.newDataValidation().requireCheckbox().build()
     );
-    sheet.setColumnWidth(13, 60);  // M列を少し狭く
-    sheet.setColumnWidth(16, 300); // P列（URL）を広く
+    sheet.setColumnWidth(13, 60);
+    sheet.setColumnWidth(16, 300);
   }
 
   const now       = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
-  const checkText = data.addressConfirmed ? "変更なし" : "変更あり/初回";
+  const checkText = data.addressConfirmed ? "\u5909\u66f4\u306a\u3057" : "\u5909\u66f4\u3042\u308a/\u521d\u56de";
 
   let products = data.products;
   if (!products || !Array.isArray(products) || products.length === 0) {
     products = [{
-      name:      data.productName      || "指定なし",
+      name:      data.productName      || "\u6307\u5b9a\u306a\u3057",
       url:       data.productUrl       || "",
       variation: data.productVariation || data.productColor || "-",
       details:   data.productDetails   || "-"
@@ -412,39 +320,35 @@ function appendPendingRecords(ss, data) {
 
   products.forEach(p => {
     sheet.appendRow([
-      now,                                              // A: 受付日時
-      data.requestId,                                   // B: 管理番号
-      data.shopName,                                    // C: 店舗名
-      data.creatorId,                                   // D: クリエイターID
-      data.realName,                                    // E: 氏名
-      checkText,                                        // F: 住所確認
-      p.name,                                           // G: 商品名
-      p.url       || "-",                               // H: 商品リンク
-      p.variation || "-",                               // I: 希望バリエーション
-      p.details   || "-",                               // J: 商品詳細
-      data.userId                           || "",      // K: LINE_USER_ID
-      data.shopNotifyGroupId || data.groupId || "",     // L: LINE_GROUP_ID
-      false,                                            // M: ✅承認（チェックボックス）
-      "",                                               // N: 承認日時
-      "受付中",                                         // O: ステータス
-      data.shopSheetUrl                     || ""       // P: 発送シートURL
+      now,
+      data.requestId,
+      data.shopName,
+      data.creatorId,
+      data.realName,
+      checkText,
+      p.name,
+      p.url       || "-",
+      p.variation || "-",
+      p.details   || "-",
+      data.userId                           || "",
+      data.shopNotifyGroupId || data.groupId || "",
+      false,
+      "",
+      "\u53d7\u4ed8\u4e2d",
+      data.shopSheetUrl                     || ""
     ]);
   });
 }
 
-/**
- * 承認待ちシートのステータスセルを更新してハイライト
- */
 function updatePendingStatus(sheet, rowIndex, statusText) {
-  const statusCol = 15; // O列（1始まり）
+  const statusCol = 15;
   const cell = sheet.getRange(rowIndex, statusCol);
   cell.setValue(statusText);
-
-  if (statusText === "転記済") {
+  if (statusText === "\u8ee2\u8a18\u6e08") {
     cell.setBackground("#dcfce7").setFontColor("#166534").setFontWeight("bold");
-  } else if (statusText.includes("要対応") || statusText.includes("失敗")) {
+  } else if (statusText.includes("\u8981\u5bfe\u5fdc") || statusText.includes("\u5931\u6557")) {
     cell.setBackground("#fef08a").setFontColor("#854d0e").setFontWeight("bold");
-  } else if (statusText === "処理中...") {
+  } else if (statusText === "\u51e6\u7406\u4e2d...") {
     cell.setBackground("#e0f2fe").setFontColor("#0369a1").setFontWeight("normal");
   } else {
     cell.setBackground("").setFontColor("").setFontWeight("normal");
@@ -452,120 +356,89 @@ function updatePendingStatus(sheet, rowIndex, statusText) {
 }
 
 // =============================================
-// インストール可能トリガーのセットアップ（1回だけ実行すればOK）
+// \u30c8\u30ea\u30ac\u30fc\u767b\u9332\uff081\u56de\u3060\u3051\u5b9f\u884c\uff09
 // =============================================
 
-/**
- * 承認チェックボックス用トリガーを登録する
- * GASエディタの「実行」メニューから setupApprovalTrigger を1回だけ実行すること
- */
 function setupApprovalTrigger() {
-  // 既存の onApprovalEdit トリガーを削除（重複防止）
   ScriptApp.getProjectTriggers().forEach(t => {
     if (t.getHandlerFunction() === "onApprovalEdit") {
       ScriptApp.deleteTrigger(t);
     }
   });
 
-  // 承認待ちシートの編集トリガーを設定
   const ss = getSpreadsheet();
   ScriptApp.newTrigger("onApprovalEdit")
     .forSpreadsheet(ss)
     .onEdit()
     .create();
 
-  Logger.log("トリガー設定完了: onApprovalEdit");
-  SpreadsheetApp.getUi().alert(
-    "✅ 承認トリガーの設定が完了しました！\n" +
-    "これでチェックボックスをONにした瞬間に処理が自動で始まります。"
-  );
+  Logger.log("setupApprovalTrigger: onApprovalEdit trigger registered successfully");
 }
 
 // =============================================
-// 住所シートを検索（動的ヘッダー検索）
+// \u4f4f\u6240\u30b7\u30fc\u30c8\u3092\u691c\u7d22\uff08\u52d5\u7684\u30d8\u30c3\u30c0\u30fc\u691c\u7d22\uff09
 // =============================================
 
-/**
- * 住所管理シートをクリエイターIDまたは氏名で検索
- * 1行目のヘッダーから列を動的に検出（列位置変更に強い設計）
- */
 function lookupAddress(ss, creatorId, realName, addressConfirmed) {
   if (!addressConfirmed) {
-    return {
-      isFound: false,
-      address: "住所変更の申し出あり（個別チャット対応）"
-    };
+    return { isFound: false, address: "\u4f4f\u6240\u5909\u66f4\u306e\u7533\u3057\u51fa\u3042\u308a\uff08\u500b\u5225\u30c1\u30e3\u30c3\u30c8\u5bfe\u5fdc\uff09" };
   }
 
   const cfg = getConfig();
   let sheet = ss.getSheetByName(cfg.SHEET_NAME_ADDRESS);
-  if (!sheet) sheet = ss.getSheetByName("住所管理シート");
-  if (!sheet) {
-    return { isFound: false, address: "住所シート（" + cfg.SHEET_NAME_ADDRESS + "）が見つかりません" };
-  }
+  if (!sheet) sheet = ss.getSheetByName("\u4f4f\u6240\u7ba1\u7406\u30b7\u30fc\u30c8");
+  if (!sheet) return { isFound: false, address: "\u4f4f\u6240\u30b7\u30fc\u30c8\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093" };
 
   const values = sheet.getDataRange().getValues();
-  if (values.length <= 1) {
-    return { isFound: false, address: "住所データなし" };
-  }
+  if (values.length <= 1) return { isFound: false, address: "\u4f4f\u6240\u30c7\u30fc\u30bf\u306a\u3057" };
 
-  // ヘッダー行から列位置を動的に検出
   const headerRow = values[0];
   let idCol = -1, nameCol = -1, zipCol = -1, addrCol = -1;
 
   for (let c = 0; c < headerRow.length; c++) {
-    const h = String(headerRow[c] || "").replace(/[\s　]/g, "").toLowerCase();
-    if (idCol === -1   && (h === "id" || h.includes("クリエイターid") || h.includes("アカウント"))) idCol = c;
-    else if (nameCol === -1 && (h === "名前" || h === "氏名" || h.includes("クリエイター名"))) nameCol = c;
-    else if (zipCol === -1  && (h === "郵便番号" || h.includes("〒") || h.includes("郵便"))) zipCol = c;
-    else if (addrCol === -1 && (h === "住所" || h.includes("お届け先"))) addrCol = c;
+    const h = String(headerRow[c] || "").replace(/[\s\u3000]/g, "").toLowerCase();
+    if (idCol === -1   && (h === "id" || h.includes("id") || h.includes("\u30a2\u30ab\u30a6\u30f3\u30c8"))) idCol = c;
+    else if (nameCol === -1 && (h === "\u540d\u524d" || h === "\u6c0f\u540d" || h.includes("\u30af\u30ea\u30a8\u30a4\u30bf\u30fc\u540d"))) nameCol = c;
+    else if (zipCol === -1  && (h === "\u90f5\u4fbf\u756a\u53f7" || h.includes("\u3012") || h.includes("\u90f5\u4fbf"))) zipCol = c;
+    else if (addrCol === -1 && (h === "\u4f4f\u6240" || h.includes("\u304a\u5c4a\u3051\u5148"))) addrCol = c;
   }
 
-  // ヘッダーが見つからない場合のフォールバック（既知の列位置）
-  if (idCol === -1)   idCol   = 3; // D列
-  if (nameCol === -1) nameCol = 5; // F列
-  if (zipCol === -1)  zipCol  = 6; // G列
-  if (addrCol === -1) addrCol = 7; // H列
+  if (idCol === -1)   idCol   = 3;
+  if (nameCol === -1) nameCol = 5;
+  if (zipCol === -1)  zipCol  = 6;
+  if (addrCol === -1) addrCol = 7;
 
   const targetId   = String(creatorId || "").trim().toLowerCase().replace(/^@/, "");
-  const targetName = String(realName  || "").trim().replace(/[\s　]/g, "");
+  const targetName = String(realName  || "").trim().replace(/[\s\u3000]/g, "");
 
   for (let i = 1; i < values.length; i++) {
     const rowId   = String(values[i][idCol]   || "").trim().toLowerCase().replace(/^@/, "");
-    const rowName = String(values[i][nameCol] || "").trim().replace(/[\s　]/g, "");
+    const rowName = String(values[i][nameCol] || "").trim().replace(/[\s\u3000]/g, "");
     const isIdMatch   = targetId   && rowId   && (rowId   === targetId);
     const isNameMatch = targetName && rowName && (rowName === targetName);
 
     if (isIdMatch || isNameMatch) {
       const rawZip  = String(values[i][zipCol]  || "").trim();
       const rawAddr = String(values[i][addrCol] || "").trim();
-
-      if (!rawAddr && !rawZip) {
-        return { isFound: false, address: "シートに登録はあるが住所が空欄" };
-      }
-
+      if (!rawAddr && !rawZip) return { isFound: false, address: "\u30b7\u30fc\u30c8\u306b\u767b\u9332\u306f\u3042\u308b\u304c\u4f4f\u6240\u304c\u7a7a\u6b04" };
       let fullAddress = rawAddr;
       if (rawZip && !rawAddr.includes(rawZip)) {
-        const fmtZip = rawZip.startsWith("〒") ? rawZip : ("〒" + rawZip);
+        const fmtZip = rawZip.startsWith("\u3012") ? rawZip : ("\u3012" + rawZip);
         fullAddress  = fmtZip + " " + rawAddr;
       }
       return { isFound: true, address: fullAddress.trim() };
     }
   }
 
-  return { isFound: false, address: "シート未登録（個人チャットで確認）" };
+  return { isFound: false, address: "\u30b7\u30fc\u30c8\u672a\u767b\u9332\uff08\u500b\u4eba\u30c1\u30e3\u30c3\u30c8\u3067\u78ba\u8a8d\uff09" };
 }
 
 // =============================================
-// 店舗マスタから店舗情報を取得
+// \u5e97\u8217\u30de\u30b9\u30bf\u304b\u3089\u5e97\u8217\u60c5\u5831\u3092\u53d6\u5f97
 // =============================================
 
-/**
- * 店舗発送依頼先情報シートから店舗名・通知グループID・発送シートURLを取得
- * 列: A:ショップ B:依頼グループ C:連絡グループ名 D:依頼方法 E:メンション先 F:発送シート G:備考
- */
 function resolveShopInfo(ss, groupId) {
-  let shopName      = "店舗（未特定）";
+  let shopName      = "\u5e97\u8217\uff08\u672a\u7279\u5b9a\uff09";
   let notifyGroupId = groupId || "";
   let shopSheetUrl  = null;
 
@@ -574,7 +447,7 @@ function resolveShopInfo(ss, groupId) {
 
   const cfg = getConfig();
   let masterSheet = ss.getSheetByName(cfg.SHEET_NAME_SHOP_MASTER);
-  if (!masterSheet) masterSheet = ss.getSheetByName("店舗マスタ");
+  if (!masterSheet) masterSheet = ss.getSheetByName("\u5e97\u8217\u30de\u30b9\u30bf");
 
   if (masterSheet) {
     const lastRow = masterSheet.getLastRow();
@@ -582,9 +455,8 @@ function resolveShopInfo(ss, groupId) {
     if (lastRow > 1) {
       const values = masterSheet.getRange(1, 1, lastRow, lastCol).getValues();
       for (let i = 1; i < values.length; i++) {
-        const rowShop      = String(values[i][0] || "").trim(); // A: ショップ名
-        const rowGroupName = String(values[i][2] || "").trim(); // C: 連絡グループ名
-
+        const rowShop      = String(values[i][0] || "").trim();
+        const rowGroupName = String(values[i][2] || "").trim();
         let isMatch = false;
         if (groupName && (
           rowGroupName === groupName ||
@@ -595,10 +467,8 @@ function resolveShopInfo(ss, groupId) {
         } else if (values[i][0] === groupId) {
           isMatch = true;
         }
-
         if (isMatch) {
           if (rowShop) shopName = rowShop;
-          // F列（列インデックス5）からURLを抽出（埋め込みリンク対応）
           const cell = masterSheet.getRange(i + 1, 6);
           shopSheetUrl = extractUrlFromCell(cell);
           break;
@@ -610,48 +480,27 @@ function resolveShopInfo(ss, groupId) {
   return { shopName, notifyGroupId, shopSheetUrl };
 }
 
-/**
- * セルからURLを抽出（RichText埋め込みリンク / HYPERLINK数式 / 通常テキスト 対応）
- */
 function extractUrlFromCell(cellRange) {
   if (!cellRange) return null;
-
-  // 1. RichTextからリンク取得（画像のような埋め込みリンク）
   try {
     const richText = cellRange.getRichTextValue();
-    if (richText) {
-      const link = richText.getLinkUrl();
-      if (link) return link;
-    }
+    if (richText) { const link = richText.getLinkUrl(); if (link) return link; }
   } catch (e) {}
-
-  // 2. =HYPERLINK() 数式から抽出
   try {
     const formula = cellRange.getFormula();
-    if (formula) {
-      const match = formula.match(/HYPERLINK\(\s*"([^"]+)"/i);
-      if (match) return match[1];
-    }
+    if (formula) { const match = formula.match(/HYPERLINK\(\s*"([^"]+)"/i); if (match) return match[1]; }
   } catch (e) {}
-
-  // 3. セル値がそのままURL
   const val = String(cellRange.getValue() || "").trim();
   if (val.startsWith("http")) return val;
-
   return null;
 }
 
 // =============================================
-// 店舗外部発送シートへ転記
+// \u5e97\u8217\u5916\u90e8\u767a\u9001\u30b7\u30fc\u30c8\u3078\u8ee2\u8a18
 // =============================================
 
-/**
- * 店舗ごとの発送シート（F列リンク先）を開いて最新行に追記
- * ヘッダーがあれば動的マッピング、なければ標準並び順で書き込む
- */
 function appendToShopExternalSheet(shopSheetUrl, data) {
   if (!shopSheetUrl) return null;
-
   try {
     const shopSS      = SpreadsheetApp.openByUrl(shopSheetUrl);
     const targetSheet = shopSS.getSheets()[0];
@@ -662,30 +511,24 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
 
     let products = data.products;
     if (!products || !Array.isArray(products) || products.length === 0) {
-      products = [{
-        name:      data.productName      || "指定なし",
-        url:       data.productUrl       || "",
-        variation: data.productVariation || "-",
-        details:   data.productDetails   || "-"
-      }];
+      products = [{ name: data.productName || "\u6307\u5b9a\u306a\u3057", url: "", variation: "-", details: "-" }];
     }
 
     const startRow = targetSheet.getLastRow() + 1;
-
-    // ヘッダーから列を動的に検出
     let dateCol=-1, creatorCol=-1, nameCol=-1, addrCol=-1, prodCol=-1, urlCol=-1, varCol=-1, detailCol=-1;
+
     if (values.length >= 1) {
       const headers = values[0];
       for (let c = 0; c < headers.length; c++) {
-        const h = String(headers[c] || "").replace(/[\s　]/g, "").toLowerCase();
-        if (dateCol    === -1 && (h.includes("日") || h.includes("date")))                               dateCol    = c;
-        if (creatorCol === -1 && (h.includes("クリエイター") || h.includes("アカウント") || h === "id")) creatorCol = c;
-        if (nameCol    === -1 && (h.includes("氏名") || h.includes("名前") || h.includes("宛名")))       nameCol    = c;
-        if (addrCol    === -1 && (h.includes("住所") || h.includes("お届け先")))                         addrCol    = c;
-        if (prodCol    === -1 && (h.includes("商品名") || h.includes("商品")))                           prodCol    = c;
-        if (urlCol     === -1 && (h.includes("url") || h.includes("リンク")))                            urlCol     = c;
-        if (varCol     === -1 && (h.includes("バリエ") || h.includes("カラー") || h.includes("サイズ") || h.includes("規格"))) varCol = c;
-        if (detailCol  === -1 && (h.includes("備考") || h.includes("詳細") || h.includes("要望")))       detailCol  = c;
+        const h = String(headers[c] || "").replace(/[\s\u3000]/g, "").toLowerCase();
+        if (dateCol    === -1 && (h.includes("\u65e5") || h.includes("date")))                               dateCol    = c;
+        if (creatorCol === -1 && (h.includes("\u30af\u30ea\u30a8\u30a4\u30bf\u30fc") || h.includes("\u30a2\u30ab\u30a6\u30f3\u30c8") || h === "id")) creatorCol = c;
+        if (nameCol    === -1 && (h.includes("\u6c0f\u540d") || h.includes("\u540d\u524d") || h.includes("\u5b9b\u540d")))       nameCol    = c;
+        if (addrCol    === -1 && (h.includes("\u4f4f\u6240") || h.includes("\u304a\u5c4a\u3051\u5148")))                         addrCol    = c;
+        if (prodCol    === -1 && (h.includes("\u5546\u54c1\u540d") || h.includes("\u5546\u54c1")))                           prodCol    = c;
+        if (urlCol     === -1 && (h.includes("url") || h.includes("\u30ea\u30f3\u30af")))                            urlCol     = c;
+        if (varCol     === -1 && (h.includes("\u30d0\u30ea\u30a8") || h.includes("\u30ab\u30e9\u30fc") || h.includes("\u30b5\u30a4\u30ba") || h.includes("\u898f\u683c"))) varCol = c;
+        if (detailCol  === -1 && (h.includes("\u5099\u8003") || h.includes("\u8a73\u7d30") || h.includes("\u8981\u671b")))       detailCol  = c;
       }
     }
 
@@ -704,42 +547,33 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
         if (detailCol  !== -1) rowData[detailCol]  = p.details   || "-";
         targetSheet.appendRow(rowData);
       } else {
-        // 標準並び順
-        targetSheet.appendRow([
-          now, data.creatorId, data.realName, data.address,
-          p.name, p.url || "-", p.variation || "-", p.details || "-"
-        ]);
+        targetSheet.appendRow([now, data.creatorId, data.realName, data.address, p.name, p.url || "-", p.variation || "-", p.details || "-"]);
       }
     });
 
     const endRow  = targetSheet.getLastRow();
-    const rowText = (startRow === endRow) ? (startRow + "行目") : (startRow + "〜" + endRow + "行目");
+    const rowText = (startRow === endRow) ? (startRow + "\u884c\u76ee") : (startRow + "\uff5e" + endRow + "\u884c\u76ee");
     return { success: true, rowText, sheetTitle: targetSheet.getName() };
 
   } catch (err) {
-    Logger.log("店舗発送シート書き込みエラー: " + err.toString());
+    Logger.log("Shop sheet write error: " + err.toString());
     return { success: false, error: err.toString() };
   }
 }
 
 // =============================================
-// 自社配送シートへ転記
+// \u81ea\u793e\u914d\u9001\u30b7\u30fc\u30c8\u3078\u8ee2\u8a18
 // =============================================
 
-/**
- * 自社の配送シートに転記（1商品1行）
- * 列: A:記入日 B:店舗名 C:クリエイターID D:氏名 E:住所 F:商品名 G:商品リンク
- *     H:希望バリエーション I:商品詳細 J:発送ステータス K:発送完了日 L:LINE_USER_ID M:リマインド
- */
 function appendShippingRecords(ss, data) {
   const cfg = getConfig();
   let sheet = ss.getSheetByName(cfg.SHEET_NAME_SHIPPING);
   if (!sheet) {
     sheet = ss.insertSheet(cfg.SHEET_NAME_SHIPPING);
     sheet.appendRow([
-      "記入日", "店舗名", "クリエイターID", "氏名", "お届け先住所",
-      "商品名", "商品リンク", "希望バリエーション", "商品詳細・ご要望",
-      "発送ステータス", "発送完了日", "LINE_USER_ID", "5日後リマインド"
+      "\u8a18\u5165\u65e5", "\u5e97\u8217\u540d", "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcID", "\u6c0f\u540d", "\u304a\u5c4a\u3051\u5148\u4f4f\u6240",
+      "\u5546\u54c1\u540d", "\u5546\u54c1\u30ea\u30f3\u30af", "\u5e0c\u671b\u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3", "\u5546\u54c1\u8a73\u7d30\u30fb\u3054\u8981\u671b",
+      "\u767a\u9001\u30b9\u30c6\u30fc\u30bf\u30b9", "\u767a\u9001\u5b8c\u4e86\u65e5", "LINE_USER_ID", "5\u65e5\u5f8c\u30ea\u30de\u30a4\u30f3\u30c9"
     ]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, 13)
@@ -747,108 +581,77 @@ function appendShippingRecords(ss, data) {
   }
 
   const now = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
-
   let products = data.products;
   if (!products || !Array.isArray(products) || products.length === 0) {
-    products = [{
-      name:      data.productName      || "指定なし",
-      url:       data.productUrl       || "",
-      variation: data.productVariation || "-",
-      details:   data.productDetails   || "-"
-    }];
+    products = [{ name: data.productName || "\u6307\u5b9a\u306a\u3057", url: "", variation: "-", details: "-" }];
   }
 
   const startRow = sheet.getLastRow() + 1;
-
   products.forEach(p => {
     sheet.appendRow([
-      now,
-      data.shopName,
-      data.creatorId,
-      data.realName,
-      data.address,
-      p.name,
-      p.url       || "-",
-      p.variation || "-",
-      p.details   || "-",
-      "未発送",
-      "",
-      data.userId,
-      "未"
+      now, data.shopName, data.creatorId, data.realName, data.address,
+      p.name, p.url || "-", p.variation || "-", p.details || "-",
+      "\u672a\u767a\u9001", "", data.userId, "\u672a"
     ]);
   });
 
   const endRow  = sheet.getLastRow();
-  const rowText = (startRow === endRow) ? (startRow + "行目") : (startRow + "〜" + endRow + "行目");
+  const rowText = (startRow === endRow) ? (startRow + "\u884c\u76ee") : (startRow + "\uff5e" + endRow + "\u884c\u76ee");
   return { startRow, endRow, rowText };
 }
 
 // =============================================
-// 店舗LINEグループへ通知
+// \u5e97\u8217LINE\u30b0\u30eb\u30fc\u30d7\u3078\u901a\u77e5
 // =============================================
 
-/**
- * 承認後、店舗LINEグループへ転記完了と発送依頼を通知
- */
 function notifyShopGroup(data, rowText, shopRowText) {
   const targetChatId = data.shopNotifyGroupId;
-  if (!targetChatId) {
-    Logger.log("通知先グループIDがないためスキップ");
-    return;
-  }
+  if (!targetChatId) { Logger.log("No group ID, skip notification"); return; }
 
   let products = data.products;
   if (!products || !Array.isArray(products) || products.length === 0) {
-    products = [{ name: data.productName || "指定なし", url: "", variation: "", details: "" }];
+    products = [{ name: data.productName || "\u6307\u5b9a\u306a\u3057", url: "", variation: "", details: "" }];
   }
 
   let productDetailsText = "";
   if (products.length === 1) {
     const p = products[0];
-    productDetailsText = "■ 商品: " + p.name;
-    if (p.url)       productDetailsText += "\n■ リンク: " + p.url;
-    if (p.variation) productDetailsText += "\n■ バリエーション: " + p.variation;
-    if (p.details)   productDetailsText += "\n■ 詳細・ご要望: " + p.details;
+    productDetailsText = "\u25a0 \u5546\u54c1: " + p.name;
+    if (p.url)       productDetailsText += "\n\u25a0 \u30ea\u30f3\u30af: " + p.url;
+    if (p.variation) productDetailsText += "\n\u25a0 \u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3: " + p.variation;
+    if (p.details)   productDetailsText += "\n\u25a0 \u8a73\u7d30\u30fb\u3054\u8981\u671b: " + p.details;
   } else {
-    productDetailsText = "■ 申請商品 (計" + products.length + "点):\n" + products.map((p, i) => {
-      let item = "・【商品" + (i + 1) + "】" + p.name;
-      if (p.variation) item += "\n  └ バリエーション: " + p.variation;
-      if (p.url)       item += "\n  └ リンク: " + p.url;
-      if (p.details)   item += "\n  └ 詳細・備考: " + p.details;
+    productDetailsText = "\u25a0 \u7533\u8acb\u5546\u54c1 (\u8a08" + products.length + "\u70b9):\n" + products.map((p, i) => {
+      let item = "\u30fb\u3010\u5546\u54c1" + (i + 1) + "\u3011" + p.name;
+      if (p.variation) item += "\n  \u2514 \u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3: " + p.variation;
+      if (p.url)       item += "\n  \u2514 \u30ea\u30f3\u30af: " + p.url;
+      if (p.details)   item += "\n  \u2514 \u8a73\u7d30\u30fb\u5099\u8003: " + p.details;
       return item;
     }).join("\n");
   }
 
-  const shopSheetPart = shopRowText
-    ? ("\n■ 店舗様発送シート: 【" + shopRowText + "】に自動記入済")
-    : "";
-
-  const addressInfoText =
-    "■ お届け先情報:\n" +
-    "・お名前: " + data.realName + " 様\n" +
-    "・ご住所: " + (data.address || "確認中");
+  const shopSheetPart = shopRowText ? ("\n\u25a0 \u5e97\u8217\u69d8\u767a\u9001\u30b7\u30fc\u30c8: \u3010" + shopRowText + "\u3011\u306b\u81ea\u52d5\u8a18\u5165\u6e08") : "";
 
   const messageText =
-    "お疲れ様です！\n" +
-    "商品サンプルの発送依頼をお願いいたします！\n\n" +
-    "■ 店舗様: " + data.shopName + "\n" +
-    "■ クリエイター: " + data.creatorId + " (" + data.realName + "様)\n\n" +
+    "\u304a\u75b2\u308c\u69d8\u3067\u3059\uff01\n" +
+    "\u5546\u54c1\u30b5\u30f3\u30d7\u30eb\u306e\u767a\u9001\u4f9d\u983c\u3092\u304a\u9858\u3044\u3044\u305f\u3057\u307e\u3059\uff01\n\n" +
+    "\u25a0 \u5e97\u8217\u69d8: " + data.shopName + "\n" +
+    "\u25a0 \u30af\u30ea\u30a8\u30a4\u30bf\u30fc: " + data.creatorId + " (" + data.realName + "\u69d8)\n\n" +
     productDetailsText + "\n\n" +
-    addressInfoText +
+    "\u25a0 \u304a\u5c4a\u3051\u5148\u60c5\u5831:\n" +
+    "\u30fb\u304a\u540d\u524d: " + data.realName + " \u69d8\n" +
+    "\u30fb\u3054\u4f4f\u6240: " + (data.address || "\u78ba\u8a8d\u4e2d") +
     shopSheetPart + "\n" +
-    "■ 配送シート管理番号: 【" + rowText + "】\n\n" +
-    "ご確認の上、発送手配をお願いいたします🙇‍♂️";
+    "\u25a0 \u914d\u9001\u30b7\u30fc\u30c8\u7ba1\u7406\u756a\u53f7: \u3010" + rowText + "\u3011\n\n" +
+    "\u3054\u78ba\u8a8d\u306e\u4e0a\u3001\u767a\u9001\u624b\u914d\u3092\u304a\u9858\u3044\u3044\u305f\u3057\u307e\u3059\ud83d\ude47\u200d\u2642\ufe0f";
 
   pushLineMessage(targetChatId, messageText);
 }
 
 // =============================================
-// 発送後5日リマインド（定期トリガー: 毎日9〜10時に実行）
+// \u767a\u9001\u5f8c5\u65e5\u30ea\u30de\u30a4\u30f3\u30c9\uff08\u6bce\u65e5\u5b9a\u671f\u30c8\u30ea\u30ac\u30fc\uff09
 // =============================================
 
-/**
- * 配送シートを走査し、発送済みから5日経過した行のクリエイターへLINEリマインドを送信
- */
 function checkAndSendReminders() {
   const cfg   = getConfig();
   const ss    = getSpreadsheet();
@@ -861,8 +664,6 @@ function checkAndSendReminders() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // 配送シートの列定義（0始まり）
-  // J=9:発送ステータス K=10:発送完了日 L=11:LINE_USER_ID M=12:リマインド F=5:商品名
   for (let i = 1; i < data.length; i++) {
     const status       = data[i][9];
     const shippedDate  = data[i][10];
@@ -870,24 +671,24 @@ function checkAndSendReminders() {
     const remindStatus = data[i][12];
     const productName  = data[i][5];
 
-    if (status === "発送済" && remindStatus === "未" && shippedDate && userId) {
+    if (status === "\u767a\u9001\u6e08" && remindStatus === "\u672a" && shippedDate && userId) {
       const shipped = new Date(shippedDate);
       shipped.setHours(0, 0, 0, 0);
       const diffDays = Math.floor((today - shipped) / (1000 * 60 * 60 * 24));
 
       if (diffDays >= 5) {
         const remindText =
-          "お世話になっております！\n" +
-          "先日発送いたしましたサンプル「" + productName + "」はお手元に届きましたでしょうか？✨\n\n" +
-          "【ご確認のお願い】\n" +
-          "① TikTokライブでのご紹介日程がお決まりでしたら、本チャットにて教えていただけますと幸いです！\n" +
-          "② ご紹介用のアフィリエイトリンクは以下となります。必ずこちらをご活用くださいませ！\n" +
-          "🔗 " + cfg.AFFILIATE_INFO_TEXT + "\n\n" +
-          "引き続きよろしくお願いいたします！";
+          "\u304a\u4e16\u8a71\u306b\u306a\u3063\u3066\u304a\u308a\u307e\u3059\uff01\n" +
+          "\u5148\u65e5\u767a\u9001\u3044\u305f\u3057\u307e\u3057\u305f\u30b5\u30f3\u30d7\u30eb\u300c" + productName + "\u300d\u306f\u304a\u624b\u5143\u306b\u5c4a\u304d\u307e\u3057\u305f\u3067\u3057\u3087\u3046\u304b\uff1f\u2728\n\n" +
+          "\u3010\u3054\u78ba\u8a8d\u306e\u304a\u9858\u3044\u3011\n" +
+          "\u2460 TikTok\u30e9\u30a4\u30d6\u3067\u306e\u3054\u7d39\u4ecb\u65e5\u7a0b\u304c\u304a\u6c7a\u307e\u308a\u3067\u3057\u305f\u3089\u3001\u672c\u30c1\u30e3\u30c3\u30c8\u306b\u3066\u6559\u3048\u3066\u3044\u305f\u3060\u3051\u307e\u3059\u3068\u5e78\u3044\u3067\u3059\uff01\n" +
+          "\u2461 \u3054\u7d39\u4ecb\u7528\u306e\u30a2\u30d5\u30a3\u30ea\u30a8\u30a4\u30c8\u30ea\u30f3\u30af\u306f\u4ee5\u4e0b\u3068\u306a\u308a\u307e\u3059\u3002\u5fc5\u305a\u3053\u3061\u3089\u3092\u3054\u6d3b\u7528\u304f\u3060\u3055\u3044\u307e\u305b\uff01\n" +
+          "\ud83d\udd17 " + cfg.AFFILIATE_INFO_TEXT + "\n\n" +
+          "\u5f15\u304d\u7d9a\u304d\u3088\u308d\u3057\u304f\u304a\u9858\u3044\u3044\u305f\u3057\u307e\u3059\uff01";
 
         pushLineMessage(userId, remindText);
         sheet.getRange(i + 1, 13).setValue(
-          "送信済 (" + Utilities.formatDate(today, "Asia/Tokyo", "MM/dd") + ")"
+          "\u9001\u4fe1\u6e08 (" + Utilities.formatDate(today, "Asia/Tokyo", "MM/dd") + ")"
         );
       }
     }
@@ -898,59 +699,32 @@ function checkAndSendReminders() {
 // LINE Messaging API
 // =============================================
 
-/**
- * LINE APIでグループ名を取得（店舗マスタのマッチングに使用）
- */
 function fetchLineGroupName(groupId) {
   const token = getConfig().LINE_CHANNEL_ACCESS_TOKEN;
   if (!token) return null;
-
   try {
     const res = UrlFetchApp.fetch(
       "https://api.line.me/v2/bot/group/" + groupId + "/summary",
-      {
-        method: "get",
-        headers: { "Authorization": "Bearer " + token },
-        muteHttpExceptions: true
-      }
+      { method: "get", headers: { "Authorization": "Bearer " + token }, muteHttpExceptions: true }
     );
-    if (res.getResponseCode() === 200) {
-      return JSON.parse(res.getContentText()).groupName;
-    }
-  } catch (e) {
-    Logger.log("グループ名取得失敗: " + e.toString());
-  }
+    if (res.getResponseCode() === 200) return JSON.parse(res.getContentText()).groupName;
+  } catch (e) { Logger.log("Group name fetch failed: " + e.toString()); }
   return null;
 }
 
-/**
- * LINE Messaging API Push送信
- */
 function pushLineMessage(toId, text) {
   const token = getConfig().LINE_CHANNEL_ACCESS_TOKEN;
   if (!token) return;
-
   try {
     UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
       method: "post",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": "Bearer " + token
-      },
-      payload: JSON.stringify({
-        to:       toId,
-        messages: [{ type: "text", text: text }]
-      }),
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+      payload: JSON.stringify({ to: toId, messages: [{ type: "text", text: text }] }),
       muteHttpExceptions: true
     });
-  } catch (e) {
-    Logger.log("Push送信エラー: " + e.toString());
-  }
+  } catch (e) { Logger.log("Push error: " + e.toString()); }
 }
 
-/**
- * JSONレスポンス生成
- */
 function createJsonResponse(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
