@@ -5,22 +5,79 @@
  */
 
 // ====================================================================
-// 設定はGASの「スクリプトプロパティ」に登録してください
-// SPREADSHEET_ID, LINE_CHANNEL_TOKEN, LIFF_ID, AFFILIATE_URL
+// スクリプトプロパティ一覧（GASの「プロジェクトの設定」から確認・編集できます）
+//
+// プロパティ名              説明                           デフォルト値
+// SPREADSHEET_ID        スプレッドシートのID             （必須）
+// LINE_CHANNEL_TOKEN    LINEチャネルアクセストークン      （必須）
+// LIFF_ID               LINE DevelopersのLIFF ID         （必須）
+// AFFILIATE_URL         アフィリエイトリンク              （任意）
+// SHEET_NAME_PENDING    承認待ちシートのタブ名            承認待ちシート
+// SHEET_NAME_CREATOR_DB クリエイターDBのタブ名            クリエイターDB
+// SHEET_NAME_SHIPPING   配送シートのタブ名               配送シート
+// SHEET_NAME_ADDRESS    住所一覧シートのタブ名            クリエイター・代理店サンプルリスト
+// SHEET_NAME_SHOP_MASTER 店舗マスタのタブ名              店舗発送依頼先情報
+// APPROVAL_COL          承認チェックボックスの列番号      13（M列）
 // ====================================================================
+
 function getConfig() {
   const props = PropertiesService.getScriptProperties();
   return {
-    SPREADSHEET_ID:            props.getProperty("SPREADSHEET_ID") || "10v-c76tg20i5sSzIM6T7-QQ7kTNLPiNOZhvF0A8NDVg",
-    LINE_CHANNEL_ACCESS_TOKEN: props.getProperty("LINE_CHANNEL_TOKEN") || "",
+    SPREADSHEET_ID:            props.getProperty("SPREADSHEET_ID")         || "10v-c76tg20i5sSzIM6T7-QQ7kTNLPiNOZhvF0A8NDVg",
+    LINE_CHANNEL_ACCESS_TOKEN: props.getProperty("LINE_CHANNEL_TOKEN")     || "",
     SHEET_NAME_PENDING:        props.getProperty("SHEET_NAME_PENDING")     || "\u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8",
     SHEET_NAME_CREATOR_DB:     props.getProperty("SHEET_NAME_CREATOR_DB")  || "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcDB",
     SHEET_NAME_SHIPPING:       props.getProperty("SHEET_NAME_SHIPPING")    || "\u914d\u9001\u30b7\u30fc\u30c8",
     SHEET_NAME_ADDRESS:        props.getProperty("SHEET_NAME_ADDRESS")     || "\u30af\u30ea\u30a8\u30a4\u30bf\u30fc\u30fb\u4ee3\u7406\u5e97\u30b5\u30f3\u30d7\u30eb\u30ea\u30b9\u30c8",
     SHEET_NAME_SHOP_MASTER:    props.getProperty("SHEET_NAME_SHOP_MASTER") || "\u5e97\u8217\u767a\u9001\u4f9d\u983c\u5148\u60c5\u5831",
-    AFFILIATE_INFO_TEXT:       props.getProperty("AFFILIATE_URL") || "",
-    APPROVAL_COL: 13   // M\u5217: \u30c1\u30a7\u30c3\u30af\u30dc\u30c3\u30af\u30b9\u627f\u8a8d\u5217\uff081\u59cb\u307e\u308a\uff09
+    AFFILIATE_INFO_TEXT:       props.getProperty("AFFILIATE_URL")          || "",
+    APPROVAL_COL:              Number(props.getProperty("APPROVAL_COL"))   || 13
   };
+}
+
+/**
+ * スクリプトプロパティに初期値を一括登録する
+ * GASエディタで「initializeScriptProperties」を選んで1回実行するだけでOK
+ * すでに設定済みのプロパティは上書きしません
+ */
+function initializeScriptProperties() {
+  const props = PropertiesService.getScriptProperties();
+  const current = props.getProperties();
+
+  const defaults = {
+    "SPREADSHEET_ID":        "10v-c76tg20i5sSzIM6T7-QQ7kTNLPiNOZhvF0A8NDVg",
+    "LINE_CHANNEL_TOKEN":    "",
+    "LIFF_ID":               "",
+    "AFFILIATE_URL":         "",
+    "SHEET_NAME_PENDING":    "\u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8",
+    "SHEET_NAME_CREATOR_DB": "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcDB",
+    "SHEET_NAME_SHIPPING":   "\u914d\u9001\u30b7\u30fc\u30c8",
+    "SHEET_NAME_ADDRESS":    "\u30af\u30ea\u30a8\u30a4\u30bf\u30fc\u30fb\u4ee3\u7406\u5e97\u30b5\u30f3\u30d7\u30eb\u30ea\u30b9\u30c8",
+    "SHEET_NAME_SHOP_MASTER":"\u5e97\u8217\u767a\u9001\u4f9d\u983c\u5148\u60c5\u5831",
+    "APPROVAL_COL":          "13"
+  };
+
+  const toSet = {};
+  const skipped = [];
+  const added = [];
+
+  Object.keys(defaults).forEach(key => {
+    if (current[key] !== undefined && current[key] !== "") {
+      skipped.push(key + " = " + current[key]);
+    } else {
+      toSet[key] = defaults[key];
+      added.push(key + " = " + defaults[key]);
+    }
+  });
+
+  if (Object.keys(toSet).length > 0) {
+    props.setProperties(toSet);
+  }
+
+  Logger.log("=== initializeScriptProperties ===");
+  Logger.log("[登録済み・スキップ]\n" + (skipped.length ? skipped.join("\n") : "なし"));
+  Logger.log("[新規追加]\n" + (added.length ? added.join("\n") : "なし"));
+  Logger.log("完了！GASの「プロジェクトの設定 > スクリプトプロパティ」で内容を確認・編集できます。");
 }
 
 function getSpreadsheet() {
