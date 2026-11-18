@@ -148,12 +148,17 @@ function processRequestData(data) {
     appendPendingRecords(ss, data);
 
     // 住所未確認の場合、フォーム送信直後にクリエイターへLINE自動送信
-    if (!data.addressConfirmed && data.userId) {
-      const addrRequestMsg =
-        "\u4f4f\u6240\u5909\u66f4\u306e\u3054\u9023\u7d61\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n" +
-        "\u6050\u308c\u5165\u308a\u307e\u3059\u304c\u3001\u304a\u5c4a\u3051\u5148\u306e\u3054\u4f4f\u6240\u3092\u3053\u3061\u3089\u306e\u30c1\u30e3\u30c3\u30c8\u306b\u3054\u8a18\u5165\u304f\u3060\u3055\u3044\u3002";
-      pushLineMessage(data.userId, addrRequestMsg);
-      Logger.log("Address request sent to: " + data.userId);
+    if (!data.addressConfirmed) {
+      const targetId = data.userId || data.groupId;
+      if (targetId) {
+        const addrRequestMsg =
+          "\u4f4f\u6240\u5909\u66f4\u306e\u3054\u9023\u7d61\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059\u3002\n" +
+          "\u6050\u308c\u5165\u308a\u307e\u3059\u304c\u3001\u304a\u5c4a\u3051\u5148\u306e\u3054\u4f4f\u6240\u3092\u3053\u3061\u3089\u306e\u30c1\u30e3\u30c3\u30c8\u306b\u3054\u8a18\u5165\u304f\u3060\u3055\u3044\u3002";
+        pushLineMessage(targetId, addrRequestMsg);
+        Logger.log("Address request sent to: " + targetId);
+      } else {
+        Logger.log("Address request skipped: No userId or groupId");
+      }
     }
 
     return {
@@ -902,14 +907,18 @@ function fetchLineGroupName(groupId) {
 
 function pushLineMessage(toId, text) {
   const token = getConfig().LINE_CHANNEL_ACCESS_TOKEN;
-  if (!token) return;
+  if (!token) {
+    Logger.log("pushLineMessage SKIPPED: LINE_CHANNEL_TOKEN is empty");
+    return;
+  }
   try {
-    UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+    const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
       method: "post",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
       payload: JSON.stringify({ to: toId, messages: [{ type: "text", text: text }] }),
       muteHttpExceptions: true
     });
+    Logger.log("pushLineMessage to " + toId + " -> status: " + res.getResponseCode() + " / body: " + res.getContentText());
   } catch (e) { Logger.log("Push error: " + e.toString()); }
 }
 
