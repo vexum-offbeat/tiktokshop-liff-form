@@ -404,7 +404,7 @@ function appendPendingRecords(ss, data) {
       }
     }
 
-    sheet.appendRow([
+    const rowData = [
       now,                                              // A: 受付日時
       data.requestId,                                   // B: 管理番号
       rowShopName,                                      // C: 店舗名（ブランド名）
@@ -423,8 +423,29 @@ function appendPendingRecords(ss, data) {
       rowShopUrl,                                       // P: 発送シートURL
       "",                                               // Q: リマインド予定日
       ""                                                // R: リマインド送信済
-    ]);
+    ];
+
+    // A列（受付日時）が空いている最初の行を確実に探して書き込む
+    const targetRow = findFirstEmptyRowInPending(sheet);
+    sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
+    // 承認列のチェックボックスと書式を保証
+    sheet.getRange(targetRow, PENDING_COL.approval).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireCheckbox().build()
+    );
   });
+}
+
+/**
+ * 承認待ちシートで実際にデータが入っていない最初の行（A列が空の行）を探す
+ */
+function findFirstEmptyRowInPending(sheet) {
+  const colA = sheet.getRange("A:A").getValues();
+  for (let r = 1; r < colA.length; r++) {
+    if (!colA[r][0] || String(colA[r][0]).trim() === "") {
+      return r + 1; // 1始まりの行番号
+    }
+  }
+  return colA.length + 1;
 }
 
 function updatePendingStatus(sheet, rowIndex, statusText) {
@@ -455,7 +476,28 @@ function formatPendingSheet() {
     "\u30ea\u30de\u30a4\u30f3\u30c9\u4e88\u5b9a\u65e5", "\u30ea\u30de\u30a4\u30f3\u30c9\u9001\u4fe1\u6e08"
   ];
 
-  // 1. ヘッダー設定
+  // 1. 既存の有効データを行番号に関係なく救出（下のほうに飛んだデータも救済）
+  const allValues = sheet.getDataRange().getValues();
+  const validDataRows = [];
+  for (let i = 1; i < allValues.length; i++) {
+    const row = allValues[i];
+    // A列(受付日時)またはB列(管理番号)が入っていれば有効データとみなす
+    if ((row[0] && String(row[0]).trim()) || (row[1] && String(row[1]).trim())) {
+      validDataRows.push(row.slice(0, headers.length));
+    }
+  }
+
+  // 2. 2行目以降をクリア（余計な空白行や飛び地を初期化）
+  if (sheet.getMaxRows() > 1) {
+    sheet.getRange(2, 1, sheet.getMaxRows() - 1, headers.length).clearContent().clearDataValidations();
+  }
+
+  // 3. 救出した有効データを2行目から隙間なくきれいに配置！
+  if (validDataRows.length > 0) {
+    sheet.getRange(2, 1, validDataRows.length, headers.length).setValues(validDataRows);
+  }
+
+  // 4. ヘッダー設定
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.setFrozenRows(1);
   sheet.setRowHeight(1, 38);
@@ -469,7 +511,7 @@ function formatPendingSheet() {
     .setHorizontalAlignment("center")
     .setVerticalAlignment("middle");
 
-  // 2. 各列の幅（文字が見切れないよう最適化）
+  // 5. 各列の幅（文字が見切れないよう最適化）
   const colWidths = {
     1: 140, // A: 受付日時
     2: 190, // B: 管理番号
@@ -494,35 +536,36 @@ function formatPendingSheet() {
     sheet.setColumnWidth(Number(c), colWidths[c]);
   });
 
-  // 3. データ行の高さと垂直中央揃え
-  const maxRows = Math.max(sheet.getMaxRows(), 100);
-  sheet.setRowHeights(2, maxRows - 1, 32);
-  sheet.getRange(2, 1, maxRows - 1, headers.length).setVerticalAlignment("middle").setFontSize(10);
+  // 6. データ行の高さと書式
+  const targetRowCount = Math.max(validDataRows.length, 30);
+  sheet.setRowHeights(2, targetRowCount, 32);
+  sheet.getRange(2, 1, targetRowCount, headers.length).setVerticalAlignment("middle").setFontSize(10);
 
-  // 4. 文字揃えの調整
   // 中央揃え: A, B, F, K, L, M, N, O, Q, R
   [1, 2, 6, 11, 12, 13, 14, 15, 17, 18].forEach(col => {
-    sheet.getRange(2, col, maxRows - 1, 1).setHorizontalAlignment("center");
+    sheet.getRange(2, col, targetRowCount, 1).setHorizontalAlignment("center");
   });
   // 左揃え: C, D, E, G, H, I, J, P
   [3, 4, 5, 7, 8, 9, 10, 16].forEach(col => {
-    sheet.getRange(2, col, maxRows - 1, 1).setHorizontalAlignment("left");
+    sheet.getRange(2, col, targetRowCount, 1).setHorizontalAlignment("left");
   });
 
-  // 5. 承認列（M列）にチェックボックス設定
-  sheet.getRange(2, PENDING_COL.approval, maxRows - 1, 1).setDataValidation(
-    SpreadsheetApp.newDataValidation().requireCheckbox().build()
-  );
+  // 7. 有効データが存在する行にチェックボックスを設定
+  if (validDataRows.length > 0) {
+    sheet.getRange(2, PENDING_COL.approval, validDataRows.length, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireCheckbox().build()
+    );
+  }
 
-  // 6. 交互の背景色（ゼブラストライプ）の適用
+  // 8. 交互の背景色（ゼブラストライプ）の適用
   sheet.getBandings().forEach(b => b.remove());
-  const dataRange = sheet.getRange(1, 1, maxRows, headers.length);
+  const dataRange = sheet.getRange(1, 1, Math.max(validDataRows.length + 1, 10), headers.length);
   const banding = dataRange.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
   banding.setHeaderRowColor("#1e293b");
   banding.setFirstRowColor("#ffffff");
   banding.setSecondRowColor("#f8fafc");
 
-  Logger.log("formatPendingSheet: \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306e\u6574\u5f62\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\uff01");
+  Logger.log("formatPendingSheet: 承認待ちシートの整形とデータ復元が完了しました！ 有効件数: " + validDataRows.length);
 }
 
 // =============================================
