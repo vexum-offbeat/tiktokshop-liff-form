@@ -351,22 +351,8 @@ function appendPendingRecords(ss, data) {
   const cfg = getConfig();
   let sheet = ss.getSheetByName(cfg.SHEET_NAME_PENDING);
   if (!sheet) {
-    sheet = ss.insertSheet(cfg.SHEET_NAME_PENDING);
-    sheet.appendRow([
-      "\u53d7\u4ed8\u65e5\u6642","\u7ba1\u7406\u756a\u53f7","\u5e97\u8217\u540d","\u30af\u30ea\u30a8\u30a4\u30bf\u30fcID","\u6c0f\u540d","\u4f4f\u6240\u78ba\u8a8d",
-      "\u5546\u54c1\u540d","\u5546\u54c1\u30ea\u30f3\u30af","\u5e0c\u671b\u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3","\u5546\u54c1\u8a73\u7d30\u30fb\u3054\u8981\u671b",
-      "LINE_USER_ID","LINE_GROUP_ID","\u2705\u627f\u8a8d","\u627f\u8a8d\u65e5\u6642","\u30b9\u30c6\u30fc\u30bf\u30b9","\u767a\u9001\u30b7\u30fc\u30c8URL",
-      "\u30ea\u30de\u30a4\u30f3\u30c9\u4e88\u5b9a\u65e5","\u30ea\u30de\u30a4\u30f3\u30c9\u9001\u4fe1\u6e08"
-    ]);
-    sheet.setFrozenRows(1);
-    sheet.getRange(1,1,1,18).setBackground("#1e3a8a").setFontColor("#ffffff").setFontWeight("bold");
-    sheet.getRange("M2:M2000").setDataValidation(
-      SpreadsheetApp.newDataValidation().requireCheckbox().build()
-    );
-    sheet.setColumnWidth(13, 60);
-    sheet.setColumnWidth(16, 300);
-    sheet.setColumnWidth(17, 120);
-    sheet.setColumnWidth(18, 120);
+    formatPendingSheet();
+    sheet = ss.getSheetByName(cfg.SHEET_NAME_PENDING);
   }
 
   const now       = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
@@ -413,6 +399,95 @@ function updatePendingStatus(sheet, rowIndex, statusText) {
   else if (statusText.includes("\u8981\u5bfe\u5fdc") || statusText.includes("\u5931\u6557")) cell.setBackground("#fef08a").setFontColor("#854d0e").setFontWeight("bold");
   else if (statusText === "\u51e6\u7406\u4e2d...")                           cell.setBackground("#e0f2fe").setFontColor("#0369a1").setFontWeight("normal");
   else                                                                        cell.setBackground("").setFontColor("").setFontWeight("normal");
+}
+
+/**
+ * 承認待ちシートのデザイン・レイアウトを一括整形する関数
+ * GASエディタで「formatPendingSheet」を実行すると、ヘッダー・列幅・交互の背景色などが即時適用されます
+ */
+function formatPendingSheet() {
+  const cfg = getConfig();
+  const ss  = getSpreadsheet();
+  let sheet = ss.getSheetByName(cfg.SHEET_NAME_PENDING);
+  if (!sheet) {
+    sheet = ss.insertSheet(cfg.SHEET_NAME_PENDING);
+  }
+
+  const headers = [
+    "\u53d7\u4ed8\u65e5\u6642", "\u7ba1\u7406\u756a\u53f7", "\u5e97\u8217\u540d", "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcID", "\u6c0f\u540d", "\u4f4f\u6240\u78ba\u8a8d",
+    "\u5546\u54c1\u540d", "\u5546\u54c1\u30ea\u30f3\u30af", "\u5e0c\u671b\u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3", "\u5546\u54c1\u8a73\u7d30\u30fb\u3054\u8981\u671b",
+    "LINE_USER_ID", "LINE_GROUP_ID", "\u2705\u627f\u8a8d", "\u627f\u8a8d\u65e5\u6642", "\u30b9\u30c6\u30fc\u30bf\u30b9", "\u767a\u9001\u30b7\u30fc\u30c8URL",
+    "\u30ea\u30de\u30a4\u30f3\u30c9\u4e88\u5b9a\u65e5", "\u30ea\u30de\u30a4\u30f3\u30c9\u9001\u4fe1\u6e08"
+  ];
+
+  // 1. ヘッダー設定
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+  sheet.setRowHeight(1, 38);
+
+  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange
+    .setBackground("#1e293b")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold")
+    .setFontSize(10)
+    .setHorizontalAlignment("center")
+    .setVerticalAlignment("middle");
+
+  // 2. 各列の幅（文字が見切れないよう最適化）
+  const colWidths = {
+    1: 140, // A: 受付日時
+    2: 190, // B: 管理番号
+    3: 130, // C: 店舗名
+    4: 130, // D: クリエイターID
+    5: 110, // E: 氏名
+    6: 100, // F: 住所確認
+    7: 190, // G: 商品名
+    8: 160, // H: 商品リンク
+    9: 130, // I: 希望バリエーション
+    10: 180, // J: 商品詳細・ご要望
+    11: 100, // K: LINE_USER_ID
+    12: 100, // L: LINE_GROUP_ID
+    13: 70,  // M: ✅承認
+    14: 140, // N: 承認日時
+    15: 110, // O: ステータス
+    16: 150, // P: 発送シートURL
+    17: 120, // Q: リマインド予定日
+    18: 120  // R: リマインド送信済
+  };
+  Object.keys(colWidths).forEach(c => {
+    sheet.setColumnWidth(Number(c), colWidths[c]);
+  });
+
+  // 3. データ行の高さと垂直中央揃え
+  const maxRows = Math.max(sheet.getMaxRows(), 100);
+  sheet.setRowHeights(2, maxRows - 1, 32);
+  sheet.getRange(2, 1, maxRows - 1, headers.length).setVerticalAlignment("middle").setFontSize(10);
+
+  // 4. 文字揃えの調整
+  // 中央揃え: A, B, F, K, L, M, N, O, Q, R
+  [1, 2, 6, 11, 12, 13, 14, 15, 17, 18].forEach(col => {
+    sheet.getRange(2, col, maxRows - 1, 1).setHorizontalAlignment("center");
+  });
+  // 左揃え: C, D, E, G, H, I, J, P
+  [3, 4, 5, 7, 8, 9, 10, 16].forEach(col => {
+    sheet.getRange(2, col, maxRows - 1, 1).setHorizontalAlignment("left");
+  });
+
+  // 5. 承認列（M列）にチェックボックス設定
+  sheet.getRange(2, PENDING_COL.approval, maxRows - 1, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireCheckbox().build()
+  );
+
+  // 6. 交互の背景色（ゼブラストライプ）の適用
+  sheet.getBandings().forEach(b => b.remove());
+  const dataRange = sheet.getRange(1, 1, maxRows, headers.length);
+  const banding = dataRange.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
+  banding.setHeaderRowColor("#1e293b");
+  banding.setFirstRowColor("#ffffff");
+  banding.setSecondRowColor("#f8fafc");
+
+  Logger.log("formatPendingSheet: \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306e\u6574\u5f62\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\uff01");
 }
 
 // =============================================
