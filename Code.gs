@@ -666,9 +666,30 @@ function extractUrlFromCell(cellRange) {
 function appendToShopExternalSheet(shopSheetUrl, data) {
   if (!shopSheetUrl) return null;
   try {
-    const shopSS      = SpreadsheetApp.openByUrl(shopSheetUrl);
-    const targetSheet = shopSS.getSheets()[0];
-    if (!targetSheet) return null;
+    const shopSS = SpreadsheetApp.openByUrl(shopSheetUrl);
+    const sheets = shopSS.getSheets();
+    if (!sheets || sheets.length === 0) return null;
+
+    // タブが複数ある場合、「発送管理シート」を優先的に探す
+    let targetSheet = null;
+    if (sheets.length > 1) {
+      // 1. 完全一致
+      targetSheet = shopSS.getSheetByName("\u767a\u9001\u7ba1\u7406\u30b7\u30fc\u30c8");
+      // 2. 部分一致（「発送管理」や「発送」を含むタブ）
+      if (!targetSheet) {
+        for (let s = 0; s < sheets.length; s++) {
+          const sName = sheets[s].getName().replace(/[\s\u3000]/g, "");
+          if (sName.includes("\u767a\u9001\u7ba1\u7406") || sName.includes("\u767a\u9001")) {
+            targetSheet = sheets[s];
+            break;
+          }
+        }
+      }
+    }
+    // 見つからない場合やタブが1つだけの場合は先頭のタブを使用
+    if (!targetSheet) {
+      targetSheet = sheets[0];
+    }
 
     const values   = targetSheet.getDataRange().getValues();
     const now      = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
