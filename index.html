@@ -230,11 +230,15 @@
     // ==========================================
     // 設定項目
     // ==========================================
-    const LIFF_ID = "__LIFF_ID__";
+    const LIFF_ID = "2011742602-wOuLBR5Z";
     const GAS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbxd1kk9tMCLJFuYZqaHwTk6ugFCYh259k7rtYljO9cQfvP5G7Uh4uu0G-qCmSKun2If/exec";
 
-    // GASから埋め込まれるブランドリスト（フォールバックあり）
-    const BRAND_LIST = __BRAND_LIST_JSON__;
+    // ブランドリスト（GASから埋め込まれた場合はそちらを優先、なければフォールバック）
+    let BRAND_LIST = ["木村海産","一柳","アレグレット","welleg","慶洋エンジニア","ラディアンヌ","ちぬや","しおそう","帽子屋","vitaeflice"];
+    try {
+      const injected = JSON.parse('__BRAND_LIST_JSON__');
+      if (Array.isArray(injected) && injected.length > 0) BRAND_LIST = injected;
+    } catch (e) { /* プレースホルダーのままの場合はフォールバックを使用 */ }
 
     let contextData = {
       userId: "",
