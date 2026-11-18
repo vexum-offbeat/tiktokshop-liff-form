@@ -753,16 +753,16 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
     const sheets = shopSS.getSheets();
     if (!sheets || sheets.length === 0) return null;
 
-    // タブが複数ある場合、「発送管理シート」を優先的に探す
+    // タブが複数ある場合、「発送依頼シート」を優先的に探す
     let targetSheet = null;
     if (sheets.length > 1) {
       // 1. 完全一致
-      targetSheet = shopSS.getSheetByName("\u767a\u9001\u7ba1\u7406\u30b7\u30fc\u30c8");
-      // 2. 部分一致（「発送管理」や「発送」を含むタブ）
+      targetSheet = shopSS.getSheetByName("\u767a\u9001\u4f9d\u983c\u30b7\u30fc\u30c8");
+      // 2. 部分一致（「発送依頼」や「発送」を含むタブ）
       if (!targetSheet) {
         for (let s = 0; s < sheets.length; s++) {
           const sName = sheets[s].getName().replace(/[\s\u3000]/g, "");
-          if (sName.includes("\u767a\u9001\u7ba1\u7406") || sName.includes("\u767a\u9001")) {
+          if (sName.includes("\u767a\u9001\u4f9d\u983c") || sName.includes("\u767a\u9001")) {
             targetSheet = sheets[s];
             break;
           }
