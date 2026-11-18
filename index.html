@@ -13,10 +13,28 @@
       background-color: #f8fafc;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
+    /* ブランド検索ドロップダウン */
+    .brand-dropdown .brand-option {
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .brand-dropdown .brand-option:hover,
+    .brand-dropdown .brand-option.selected {
+      background-color: #eff6ff;
+      color: #1e3a8a;
+      font-weight: 600;
+    }
+    .brand-dropdown .no-result {
+      padding: 10px 14px;
+      color: #94a3b8;
+      font-size: 12px;
+    }
   </style>
+</head>
 <body class="min-h-screen text-slate-800 pb-12">
 
-  <!-- ヘッダー (ボタンと同一の美しいネイビーグラデーション) -->
+  <!-- ヘッダー -->
   <header style="background: linear-gradient(135deg, #1d4ed8 0%, #1e3a8a 45%, #0f172a 100%);" class="text-white py-4 px-5 shadow-lg shadow-blue-950/20 sticky top-0 z-20">
     <div class="max-w-md mx-auto">
       <h1 class="text-base font-bold tracking-tight">商品サンプル紹介 申請フォーム</h1>
@@ -70,7 +88,7 @@
 
         <!-- 商品カード一覧コンテナ -->
         <div id="products-container" class="space-y-3">
-          <!-- 初回商品カード (JavaScriptから動的生成、または初期HTML) -->
+          <!-- 初回商品カード -->
           <div class="product-card bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3 relative transition-all" data-index="1">
             <div class="flex items-center justify-between border-b border-slate-100 pb-2">
               <span class="product-badge text-xs font-bold text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg">
@@ -79,6 +97,24 @@
               <button type="button" onclick="removeProductCard(this)" class="remove-btn hidden text-xs text-rose-500 hover:text-rose-700 font-medium py-1 px-2 rounded-lg hover:bg-rose-50 transition-colors">
                 削除
               </button>
+            </div>
+
+            <!-- ★ ブランド選択（検索付きプルダウン） -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">
+                ブランド / 店舗名 <span class="text-rose-500">*</span>
+              </label>
+              <div class="relative brand-combobox">
+                <div class="relative">
+                  <input type="text"
+                         class="prod-brand w-full px-3.5 py-2.5 pr-8 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50"
+                         required placeholder="ブランドを選択または検索" autocomplete="off">
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  </div>
+                </div>
+                <div class="brand-dropdown hidden absolute z-30 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto py-1 text-sm"></div>
+              </div>
             </div>
 
             <div>
@@ -138,7 +174,7 @@
         </div>
       </div>
 
-      <!-- セクション3: お届け先住所の確認（チェックボックス） -->
+      <!-- セクション3: お届け先住所の確認 -->
       <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3">
         <div class="flex items-center space-x-2 border-b border-slate-100 pb-2">
           <span class="w-2 h-2 rounded-full bg-blue-900"></span>
@@ -194,8 +230,11 @@
     // ==========================================
     // 設定項目
     // ==========================================
-    const LIFF_ID = "2011742602-wOuLBR5Z";
+    const LIFF_ID = "__LIFF_ID__";
     const GAS_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbxd1kk9tMCLJFuYZqaHwTk6ugFCYh259k7rtYljO9cQfvP5G7Uh4uu0G-qCmSKun2If/exec";
+
+    // GASから埋め込まれるブランドリスト（フォールバックあり）
+    const BRAND_LIST = __BRAND_LIST_JSON__;
 
     let contextData = {
       userId: "",
@@ -205,9 +244,52 @@
       type: ""
     };
 
+    // ==========================================
+    // ブランド検索コンボボックス
+    // ==========================================
+    function initBrandCombobox(card) {
+      const input    = card.querySelector(".prod-brand");
+      const dropdown = card.querySelector(".brand-dropdown");
+      if (!input || !dropdown) return;
+
+      function renderOptions(query) {
+        const q = query.trim().toLowerCase();
+        const matched = q === ""
+          ? BRAND_LIST
+          : BRAND_LIST.filter(b => b.toLowerCase().includes(q));
+
+        dropdown.innerHTML = "";
+        if (matched.length === 0) {
+          dropdown.innerHTML = '<div class="no-result">見つかりません</div>';
+        } else {
+          matched.forEach(brand => {
+            const item = document.createElement("div");
+            item.className = "brand-option";
+            item.textContent = brand;
+            item.addEventListener("mousedown", (e) => {
+              e.preventDefault();
+              input.value = brand;
+              dropdown.classList.add("hidden");
+            });
+            dropdown.appendChild(item);
+          });
+        }
+        dropdown.classList.remove("hidden");
+      }
+
+      input.addEventListener("focus", () => renderOptions(input.value));
+      input.addEventListener("input", () => renderOptions(input.value));
+      input.addEventListener("blur", () => {
+        setTimeout(() => dropdown.classList.add("hidden"), 150);
+      });
+    }
+
     // 画面初期化
     window.addEventListener("DOMContentLoaded", async () => {
       try {
+        // 初回カードのブランドコンボボックスを初期化
+        document.querySelectorAll(".product-card").forEach(card => initBrandCombobox(card));
+
         await liff.init({ liffId: LIFF_ID });
 
         if (!liff.isLoggedIn()) {
@@ -232,13 +314,7 @@
         document.getElementById("user-name").textContent = contextData.displayName;
         document.getElementById("user-picture").src = contextData.pictureUrl;
 
-        // URLパラメータからの商品名補完
         const urlParams = new URLSearchParams(window.location.search);
-        const paramProduct = urlParams.get("product") || urlParams.get("product_name");
-        if (paramProduct) {
-          document.getElementById("product_name").value = paramProduct;
-        }
-
         const paramGroup = urlParams.get("groupId") || urlParams.get("group");
         if (paramGroup && !contextData.groupId) {
           contextData.groupId = paramGroup;
@@ -252,7 +328,9 @@
       }
     });
 
+    // ==========================================
     // 複数商品の動的追加・削除
+    // ==========================================
     function addProductCard() {
       const container = document.getElementById("products-container");
       const card = document.createElement("div");
@@ -265,6 +343,23 @@
           <button type="button" onclick="removeProductCard(this)" class="remove-btn text-xs text-rose-500 hover:text-rose-700 font-medium py-1 px-2 rounded-lg hover:bg-rose-50 transition-colors">
             削除
           </button>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            ブランド / 店舗名 <span class="text-rose-500">*</span>
+          </label>
+          <div class="relative brand-combobox">
+            <div class="relative">
+              <input type="text"
+                     class="prod-brand w-full px-3.5 py-2.5 pr-8 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-slate-50"
+                     required placeholder="ブランドを選択または検索" autocomplete="off">
+              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+              </div>
+            </div>
+            <div class="brand-dropdown hidden absolute z-30 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto py-1 text-sm"></div>
+          </div>
         </div>
 
         <div>
@@ -296,11 +391,10 @@
         </div>
       `;
       container.appendChild(card);
+      initBrandCombobox(card);
       updateProductCardsUI();
-
-      // 新しく追加されたカードの商品名入力欄にスムーズにスクロール
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      card.querySelector('.prod-name').focus();
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.querySelector(".prod-brand").focus();
     }
 
     function removeProductCard(btn) {
@@ -322,16 +416,15 @@
 
         const removeBtn = card.querySelector(".remove-btn");
         if (removeBtn) {
-          if (count > 1) {
-            removeBtn.classList.remove("hidden");
-          } else {
-            removeBtn.classList.add("hidden");
-          }
+          if (count > 1) removeBtn.classList.remove("hidden");
+          else removeBtn.classList.add("hidden");
         }
       });
     }
 
+    // ==========================================
     // フォーム送信
+    // ==========================================
     async function handleSubmit(e) {
       e.preventDefault();
 
@@ -345,18 +438,14 @@
       const products = [];
 
       cards.forEach(card => {
-        const name = card.querySelector(".prod-name").value.trim();
-        const url = card.querySelector(".prod-url").value.trim();
+        const brand     = card.querySelector(".prod-brand")    ? card.querySelector(".prod-brand").value.trim() : "";
+        const name      = card.querySelector(".prod-name").value.trim();
+        const url       = card.querySelector(".prod-url").value.trim();
         const variation = card.querySelector(".prod-variation").value.trim();
-        const details = card.querySelector(".prod-details").value.trim();
+        const details   = card.querySelector(".prod-details").value.trim();
 
         if (name) {
-          products.push({
-            name: name,
-            url: url,
-            variation: variation,
-            details: details
-          });
+          products.push({ brand, name, url, variation, details });
         }
       });
 
@@ -368,33 +457,37 @@
         return;
       }
 
-      // 互換性のため代表値もセット
       const primaryProduct = products[0];
       const payload = {
-        userId: contextData.userId,
+        userId:          contextData.userId,
         lineDisplayName: contextData.displayName,
-        groupId: contextData.groupId,
-        contextType: contextData.type,
+        groupId:         contextData.groupId,
+        contextType:     contextData.type,
 
-        // 複数商品配列
+        // 複数商品配列（brandを含む）
         products: products,
 
         // 単体用フィールド（互換性担保）
-        productName: products.map(p => p.name).join(" / "),
-        productColor: primaryProduct.variation || "",
-        productSize: "",
-        productQty: products.length,
-        productDetails: products.map((p, i) => `【商品${i+1}: ${p.name}】` + (p.url ? ` URL: ${p.url}` : '') + (p.variation ? ` バリエ: ${p.variation}` : '') + (p.details ? ` 備考: ${p.details}` : '')).join("\n"),
+        productName:    products.map(p => p.name).join(" / "),
+        productColor:   primaryProduct.variation || "",
+        productSize:    "",
+        productQty:     products.length,
+        productDetails: products.map((p, i) =>
+          `【商品${i+1}: ${p.name}】` +
+          (p.brand     ? ` ブランド: ${p.brand}` : "") +
+          (p.url       ? ` URL: ${p.url}` : "") +
+          (p.variation ? ` バリエ: ${p.variation}` : "") +
+          (p.details   ? ` 備考: ${p.details}` : "")
+        ).join("\n"),
 
         // クリエイター情報
-        creatorId: document.getElementById("creator_id").value.trim(),
-        realName: document.getElementById("real_name").value.trim(),
+        creatorId:        document.getElementById("creator_id").value.trim(),
+        realName:         document.getElementById("real_name").value.trim(),
         addressConfirmed: document.getElementById("address_confirmed").checked
       };
 
       try {
         if (typeof google !== "undefined" && google.script && google.script.run) {
-          // GASから配信されている場合はgoogle.script.runで直接実行
           await new Promise((resolve, reject) => {
             google.script.run
               .withSuccessHandler((res) => {
@@ -405,7 +498,6 @@
               .submitShippingRequest(payload);
           });
         } else {
-          // GitHub Pages から GAS への送信
           const res = await fetch(GAS_ENDPOINT_URL, {
             method: "POST",
             headers: { "Content-Type": "text/plain;charset=utf-8" },

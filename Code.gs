@@ -96,12 +96,19 @@ function getSpreadsheet() {
 // =============================================
 
 function doGet(e) {
+  if (e && e.parameter && e.parameter.action === "brands") {
+    return createJsonResponse(getBrandList());
+  }
   const liffId = PropertiesService.getScriptProperties().getProperty("LIFF_ID") || "";
+  const brandList = getBrandList();
   const html = HtmlService.createHtmlOutputFromFile("index")
     .setTitle("\u5546\u54c1\u30b5\u30f3\u30d7\u30eb\u767a\u9001\u30fb\u7d39\u4ecb\u53d7\u4ed8\u30d5\u30a9\u30fc\u30e0")
     .addMetaTag("viewport", "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  html.setContent(html.getContent().replace("__LIFF_ID__", liffId));
+  html.setContent(html.getContent()
+    .replace("__LIFF_ID__", liffId)
+    .replace("__BRAND_LIST_JSON__", JSON.stringify(brandList))
+  );
   return html;
 }
 
@@ -330,14 +337,14 @@ function appendCreatorDB(ss, data) {
       data.shopNotifyGroupId     || data.groupId || "",
       data.realName              || "",
       p.name                     || "",
-      data.shopName              || "",
+      p.brand                    || data.shopName || "",
       p.url                      || ""
     ]);
   });
 }
 
 // =============================================
-// \u627f\u8a8d\u5f85\u3061\u30b7\u30fc\u30c8\u306b\u66f8\u304d\u8fbc\u307f\uff081\u5546\u54c11\u884c\uff09
+// 承認待ちシートに書き込み（1商品1行）
 // =============================================
 
 /**
@@ -363,16 +370,30 @@ function appendPendingRecords(ss, data) {
     products = [{
       name:      data.productName      || "\u6307\u5b9a\u306a\u3057",
       url:       data.productUrl       || "",
+      brand:     data.shopName         || "",
       variation: data.productVariation || data.productColor || "-",
       details:   data.productDetails   || "-"
     }];
   }
 
   products.forEach(p => {
+    let rowShopName = p.brand || data.shopName;
+    let rowShopUrl  = data.shopSheetUrl || "";
+    let rowGroupId  = data.shopNotifyGroupId || data.groupId || "";
+
+    if (p.brand) {
+      const info = resolveShopInfoByName(ss, p.brand);
+      if (info) {
+        rowShopName = info.shopName;
+        if (info.shopSheetUrl)  rowShopUrl = info.shopSheetUrl;
+        if (info.notifyGroupId) rowGroupId = info.notifyGroupId;
+      }
+    }
+
     sheet.appendRow([
       now,                                              // A: 受付日時
       data.requestId,                                   // B: 管理番号
-      data.shopName,                                    // C: 店舗名
+      rowShopName,                                      // C: 店舗名（ブランド名）
       data.creatorId,                                   // D: クリエイターID
       data.realName,                                    // E: 氏名
       checkText,                                        // F: 住所確認
@@ -381,11 +402,11 @@ function appendPendingRecords(ss, data) {
       p.variation || "-",                               // I: 希望バリエーション
       p.details   || "-",                               // J: 商品詳細
       data.userId                           || "",      // K: LINE_USER_ID
-      data.shopNotifyGroupId || data.groupId || "",     // L: LINE_GROUP_ID
+      rowGroupId,                                       // L: LINE_GROUP_ID
       false,                                            // M: ✅承認
       "",                                               // N: 承認日時
       "\u53d7\u4ed8\u4e2d",                             // O: ステータス
-      data.shopSheetUrl                     || "",      // P: 発送シートURL
+      rowShopUrl,                                       // P: 発送シートURL
       "",                                               // Q: リマインド予定日
       ""                                                // R: リマインド送信済
     ]);
@@ -618,8 +639,70 @@ function lookupAddress(ss, creatorId, realName, addressConfirmed) {
 }
 
 // =============================================
-// \u5e97\u8217\u30de\u30b9\u30bf\u304b\u3089\u5e97\u8217\u60c5\u5831\u3092\u53d6\u5f97
+// 店舗マスタから店舗情報を取得
 // =============================================
+
+/**
+ * ブランド名（店舗名）から発送先マスタを検索して店舗情報（発送シートURL等）を取得
+ */
+function resolveShopInfoByName(ss, brandName) {
+  if (!brandName || !brandName.trim()) return null;
+  const target = brandName.trim();
+  const cfg = getConfig();
+  let masterSheet = ss.getSheetByName(cfg.SHEET_NAME_SHOP_MASTER) || ss.getSheetByName("\u5e97\u8217\u30de\u30b9\u30bf");
+  if (!masterSheet) return null;
+
+  const lastRow = masterSheet.getLastRow();
+  if (lastRow <= 1) return null;
+
+  const values = masterSheet.getRange(1, 1, lastRow, Math.max(masterSheet.getLastColumn(), 7)).getValues();
+  for (let i = 1; i < values.length; i++) {
+    const rowShop = String(values[i][0] || "").trim(); // A列: ショップ名
+    if (rowShop && (rowShop === target || rowShop.includes(target) || target.includes(rowShop))) {
+      const shopSheetUrl = extractUrlFromCell(masterSheet.getRange(i + 1, 6)); // F列: 発送シートURL
+      const notifyGroupId = String(values[i][1] || "").trim(); // B列: 依頼グループ
+      return {
+        shopName: rowShop,
+        shopSheetUrl: shopSheetUrl,
+        notifyGroupId: notifyGroupId
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * 登録されているブランド（店舗名）一覧を取得
+ */
+function getBrandList() {
+  const cleanFallback = [
+    "\u6728\u6751\u6d77\u7523", "\u4e00\u67f3", "\u30a2\u30ec\u30b0\u30ec\u30c3\u30c8", "welleg",
+    "\u6176\u6d0b\u30a8\u30f3\u30b8\u30cb\u30a2", "\u30e9\u30c7\u30a3\u30a2\u30f3\u30cc",
+    "\u3061\u306c\u3084", "\u3057\u304a\u305d\u3046", "\u5e3d\u5b50\u5c4b", "vitaeflice"
+  ];
+
+  try {
+    const ss = getSpreadsheet();
+    const cfg = getConfig();
+    const masterSheet = ss.getSheetByName(cfg.SHEET_NAME_SHOP_MASTER) || ss.getSheetByName("\u5e97\u8217\u30de\u30b9\u30bf");
+    if (!masterSheet) return cleanFallback;
+
+    const lastRow = masterSheet.getLastRow();
+    if (lastRow <= 1) return cleanFallback;
+
+    const values = masterSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    const list = [];
+    values.forEach(r => {
+      const name = String(r[0] || "").trim();
+      if (name && !list.includes(name)) list.push(name);
+    });
+
+    return list.length > 0 ? list : cleanFallback;
+  } catch (e) {
+    Logger.log("getBrandList error: " + e.toString());
+    return cleanFallback;
+  }
+}
 
 function resolveShopInfo(ss, groupId) {
   let shopName = "\u5e97\u8217\uff08\u672a\u7279\u5b9a\uff09", notifyGroupId = groupId || "", shopSheetUrl = null;
