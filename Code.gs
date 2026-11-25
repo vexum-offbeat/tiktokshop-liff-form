@@ -298,7 +298,8 @@ function executeApproval(ss, pendingSheet, requestId, selectedAddress) {
       const data = {
         shopName, shopNotifyGroupId: groupId, shopSheetUrl,
         creatorId, realName, address: selectedAddress,
-        userId, requestId, products
+        userId, requestId, products,
+        approvedAt: approvedAt  // 承認日時（yyyy/MM/dd HH:mm）
       };
 
       // 店舗外部発送シートへ転記
@@ -882,8 +883,111 @@ function extractUrlFromCell(cellRange) {
 }
 
 // =============================================
-// \u5e97\u8217\u5916\u90e8\u767a\u9001\u30b7\u30fc\u30c8\u3078\u8ee2\u8a18
+// 店舗外部発送シートへ転記
 // =============================================
+
+/**
+ * 日時（Date または "yyyy/MM/dd HH:mm(:ss)" 等）を "M/d"（例: "10/10"）に変換する。
+ * 文字列に含まれる月・日を直接抽出し、タイムゾーンによる日付ずれを防ぐ。
+ */
+function formatShortDateMD(dateInput) {
+  if (dateInput instanceof Date && !isNaN(dateInput.getTime())) {
+    if (typeof Utilities !== "undefined" && Utilities.formatDate) {
+      return Utilities.formatDate(dateInput, "Asia/Tokyo", "M/d");
+    }
+    return (dateInput.getMonth() + 1) + "/" + dateInput.getDate();
+  }
+
+  const str = String(dateInput || "").trim();
+  if (str) {
+    const ymd = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[\sT]|$)/);
+    if (ymd) {
+      return Number(ymd[2]) + "/" + Number(ymd[3]);
+    }
+    const md = str.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\sT]|$)/);
+    if (md) {
+      return Number(md[1]) + "/" + Number(md[2]);
+    }
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      if (typeof Utilities !== "undefined" && Utilities.formatDate) {
+        return Utilities.formatDate(parsed, "Asia/Tokyo", "M/d");
+      }
+      return (parsed.getMonth() + 1) + "/" + parsed.getDate();
+    }
+  }
+
+  const fallback = new Date();
+  if (typeof Utilities !== "undefined" && Utilities.formatDate) {
+    return Utilities.formatDate(fallback, "Asia/Tokyo", "M/d");
+  }
+  return (fallback.getMonth() + 1) + "/" + fallback.getDate();
+}
+
+/**
+ * 転記先シートの1行目ヘッダーから各項目に対応する列インデックス（0始まり）を判定する。
+ * 判定順を明確にし、「商品URL」が「商品名」に、「お届け先氏名」が「住所」に誤マッチするのを防ぐ。
+ */
+function detectShopSheetColumns(headerRow) {
+  const cols = {
+    dateCol: -1, creatorCol: -1, nameCol: -1, addrCol: -1,
+    prodCol: -1, urlCol: -1, varCol: -1, detailCol: -1
+  };
+  if (!headerRow || !headerRow.length) return cols;
+
+  let fallbackDateCol = -1;
+  headerRow.forEach((h, c) => {
+    const hh = String(h || "").replace(/[\s\u3000]/g, "").toLowerCase();
+    if (!hh) return;
+
+    // 具体的な依頼・承認・受付系の日付列を優先し、単独の「日」は「発送日」等に奪われないよう後順位にする
+    if (cols.dateCol === -1 && (
+      hh.includes("依頼日") || hh.includes("申請日") || hh.includes("承認日") ||
+      hh.includes("受付日") || hh.includes("日付") || hh.includes("date")
+    )) {
+      cols.dateCol = c;
+      return;
+    }
+    if (cols.urlCol === -1 && (hh.includes("url") || hh.includes("リンク"))) {
+      cols.urlCol = c;
+      return;
+    }
+    if (cols.detailCol === -1 && (hh.includes("備考") || hh.includes("詳細") || hh.includes("要望"))) {
+      cols.detailCol = c;
+      return;
+    }
+    if (cols.varCol === -1 && (hh.includes("バリエ") || hh.includes("カラー") || hh.includes("サイズ") || hh.includes("規格"))) {
+      cols.varCol = c;
+      return;
+    }
+    if (cols.prodCol === -1 && (hh.includes("商品名") || hh.includes("商品"))) {
+      cols.prodCol = c;
+      return;
+    }
+    if (cols.creatorCol === -1 &&
+        !hh.includes("氏名") && !hh.includes("名前") && !hh.includes("宛名") &&
+        (hh.includes("クリエイター") || hh.includes("アカウント") || hh.includes("tiktok") || hh === "id")) {
+      cols.creatorCol = c;
+      return;
+    }
+    if (cols.nameCol === -1 && (hh.includes("氏名") || hh.includes("名前") || hh.includes("宛名"))) {
+      cols.nameCol = c;
+      return;
+    }
+    if (cols.addrCol === -1 && (hh.includes("住所") || hh.includes("お届け先") || hh.includes("届け先"))) {
+      cols.addrCol = c;
+      return;
+    }
+    if (fallbackDateCol === -1 && hh.includes("日")) {
+      fallbackDateCol = c;
+    }
+  });
+
+  if (cols.dateCol === -1 && fallbackDateCol !== -1) {
+    cols.dateCol = fallbackDateCol;
+  }
+  return cols;
+}
 
 function appendToShopExternalSheet(shopSheetUrl, data) {
   if (!shopSheetUrl) return null;
@@ -896,12 +1000,12 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
     let targetSheet = null;
     if (sheets.length > 1) {
       // 1. 完全一致
-      targetSheet = shopSS.getSheetByName("\u767a\u9001\u4f9d\u983c\u30b7\u30fc\u30c8");
+      targetSheet = shopSS.getSheetByName("発送依頼シート");
       // 2. 部分一致（「発送依頼」や「発送」を含むタブ）
       if (!targetSheet) {
         for (let s = 0; s < sheets.length; s++) {
           const sName = sheets[s].getName().replace(/[\s\u3000]/g, "");
-          if (sName.includes("\u767a\u9001\u4f9d\u983c") || sName.includes("\u767a\u9001")) {
+          if (sName.includes("発送依頼") || sName.includes("発送")) {
             targetSheet = sheets[s];
             break;
           }
@@ -914,50 +1018,51 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
     }
 
     const values   = targetSheet.getDataRange().getValues();
-    const now      = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
+    const dateStr  = formatShortDateMD(data.approvedAt);
     const startRow = targetSheet.getLastRow() + 1;
 
     let products = data.products;
     if (!products || !Array.isArray(products) || products.length === 0) {
-      products = [{ name: data.productName || "\u6307\u5b9a\u306a\u3057", url: "", variation: "-", details: "-" }];
+      products = [{ name: data.productName || "指定なし", url: "", variation: "-", details: "-" }];
     }
 
-    let dateCol=-1,creatorCol=-1,nameCol=-1,addrCol=-1,prodCol=-1,urlCol=-1,varCol=-1,detailCol=-1;
-    if (values.length >= 1) {
-      values[0].forEach((h, c) => {
-        const hh = String(h || "").replace(/[\s\u3000]/g, "").toLowerCase();
-        if (dateCol    === -1 && (hh.includes("\u65e5") || hh.includes("date")))                               dateCol    = c;
-        if (creatorCol === -1 && (hh.includes("\u30af\u30ea\u30a8\u30a4\u30bf\u30fc") || hh.includes("\u30a2\u30ab\u30a6\u30f3\u30c8") || hh === "id")) creatorCol = c;
-        if (nameCol    === -1 && (hh.includes("\u6c0f\u540d") || hh.includes("\u540d\u524d") || hh.includes("\u5b9b\u540d")))       nameCol    = c;
-        if (addrCol    === -1 && (hh.includes("\u4f4f\u6240") || hh.includes("\u304a\u5c4a\u3051\u5148")))                         addrCol    = c;
-        if (prodCol    === -1 && (hh.includes("\u5546\u54c1\u540d") || hh.includes("\u5546\u54c1")))                           prodCol    = c;
-        if (urlCol     === -1 && (hh.includes("url") || hh.includes("\u30ea\u30f3\u30af")))                            urlCol     = c;
-        if (varCol     === -1 && (hh.includes("\u30d0\u30ea\u30a8") || hh.includes("\u30ab\u30e9\u30fc") || hh.includes("\u30b5\u30a4\u30ba") || hh.includes("\u898f\u683c"))) varCol = c;
-        if (detailCol  === -1 && (hh.includes("\u5099\u8003") || hh.includes("\u8a73\u7d30") || hh.includes("\u8981\u671b")))       detailCol  = c;
-      });
-    }
-
-    const hasMap = nameCol !== -1 || addrCol !== -1 || prodCol !== -1;
+    const cols = values.length >= 1 ? detectShopSheetColumns(values[0]) : detectShopSheetColumns([]);
+    const hasMap = Object.keys(cols).some(k => cols[k] !== -1);
+    const maxMatchedCol = Math.max(
+      cols.dateCol, cols.creatorCol, cols.nameCol, cols.addrCol,
+      cols.prodCol, cols.urlCol, cols.varCol, cols.detailCol
+    );
+    const rowLen = Math.max(targetSheet.getLastColumn(), maxMatchedCol + 1, 1);
 
     products.forEach(p => {
       if (hasMap) {
-        const row = new Array(Math.max(targetSheet.getLastColumn(), 10)).fill("");
-        if (dateCol    !== -1) row[dateCol]    = now;
-        if (creatorCol !== -1) row[creatorCol] = data.creatorId;
-        if (nameCol    !== -1) row[nameCol]    = data.realName;
-        if (addrCol    !== -1) row[addrCol]    = data.address;
-        if (prodCol    !== -1) row[prodCol]    = p.name;
-        if (urlCol     !== -1) row[urlCol]     = p.url       || "-";
-        if (varCol     !== -1) row[varCol]     = p.variation || "-";
-        if (detailCol  !== -1) row[detailCol]  = p.details   || "-";
+        const row = new Array(rowLen).fill("");
+        if (cols.dateCol    !== -1) row[cols.dateCol]    = dateStr;
+        if (cols.creatorCol !== -1) row[cols.creatorCol] = data.creatorId || "";
+        if (cols.nameCol    !== -1) row[cols.nameCol]    = data.realName  || "";
+        if (cols.addrCol    !== -1) row[cols.addrCol]    = data.address   || "";
+        if (cols.prodCol    !== -1) row[cols.prodCol]    = p.name         || "";
+        if (cols.urlCol     !== -1) row[cols.urlCol]     = p.url          || "-";
+        if (cols.varCol     !== -1) row[cols.varCol]     = p.variation    || "-";
+        if (cols.detailCol  !== -1) row[cols.detailCol]  = p.details      || "-";
         targetSheet.appendRow(row);
       } else {
-        targetSheet.appendRow([now, data.creatorId, data.realName, data.address, p.name, p.url||"-", p.variation||"-", p.details||"-"]);
+        targetSheet.appendRow([dateStr, data.creatorId || "", data.realName || "", data.address || "", p.name || "", p.url || "-", p.variation || "-", p.details || "-"]);
       }
     });
 
-    const endRow  = targetSheet.getLastRow();
-    const rowText = startRow === endRow ? startRow + "\u884c\u76ee" : startRow + "\uff5e" + endRow + "\u884c\u76ee";
+    const endRow = targetSheet.getLastRow();
+    // 転記先の列が元々yyyy/MM/dd形式等にフォーマットされていても「10/10」形式で表示されるようにする
+    const writtenDateCol = hasMap ? cols.dateCol : 0;
+    if (writtenDateCol !== -1 && endRow >= startRow) {
+      try {
+        targetSheet.getRange(startRow, writtenDateCol + 1, endRow - startRow + 1, 1).setNumberFormat("M/d");
+      } catch (fmtErr) {
+        Logger.log("setNumberFormat M/d skip: " + fmtErr.toString());
+      }
+    }
+
+    const rowText = startRow === endRow ? startRow + "行目" : startRow + "〜" + endRow + "行目";
     return { success: true, rowText, sheetTitle: targetSheet.getName() };
 
   } catch (err) {
