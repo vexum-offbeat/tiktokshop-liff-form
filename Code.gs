@@ -178,26 +178,12 @@ function processRequestData(data) {
 // \u627f\u8a8d\u30c1\u30a7\u30c3\u30af\u6642\u306b\u5373\u6642\u8d77\u52d5\uff08\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb\u53ef\u80fd\u30c8\u30ea\u30ac\u30fc\uff09
 // =============================================
 
+/**
+ * onApprovalEdit は廃止しました。
+ * 承認は「発送システム」メニュー → 「選択行を承認する」から行ってください。
+ */
 function onApprovalEdit(e) {
-  try {
-    const cfg   = getConfig();
-    const range = e.range;
-    const sheet = range.getSheet();
-
-    if (sheet.getName() !== cfg.SHEET_NAME_PENDING) return;
-    if (range.getColumn() !== cfg.APPROVAL_COL) return;
-    if (range.getRow() <= 1) return;
-    if (e.value !== "TRUE") return;
-
-    const ss        = getSpreadsheet();
-    const requestId = sheet.getRange(range.getRow(), 2).getValue();
-    if (!requestId) return;
-
-    processApprovedRequest(ss, sheet, requestId);
-
-  } catch (err) {
-    Logger.log("onApprovalEdit Error: " + err.toString());
-  }
+  // 旧チェックボックストリガー方式は廃止。何もしない。
 }
 
 /**
@@ -217,38 +203,54 @@ var PENDING_COL = {
   shopUrl:16, remindDate:17, remindSent:18
 };
 
-function processApprovedRequest(ss, pendingSheet, requestId) {
+/**
+ * 承認処理の本体。住所が確定した後に呼ばれる。
+ * @param {Spreadsheet} ss
+ * @param {Sheet} pendingSheet
+ * @param {string} requestId
+ * @param {string} selectedAddress  確定した住所文字列
+ * @returns {{ success: boolean, message: string }}
+ */
+function executeApproval(ss, pendingSheet, requestId, selectedAddress) {
   const cfg  = getConfig();
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); }
-  catch (e) { Logger.log("Lock failed: " + e.toString()); return; }
+  catch (e) { return { success: false, message: "ロック取得に失敗しました。もう一度試してください。" }; }
 
   try {
     const allData = pendingSheet.getDataRange().getValues();
 
-    // \u540c\u3058\u7ba1\u7406\u756a\u53f7\u306e\u884c\u3092\u53ce\u96c6\uff08\u672a\u8ee2\u8a18\u306e\u307f\uff09
+    // 同じ管理番号の行を収集（未転記のみ）
     const targetRows = [];
     for (let i = 1; i < allData.length; i++) {
       const rowId = String(allData[i][PENDING_COL.reqId - 1]  || "");
       const st    = String(allData[i][PENDING_COL.status - 1] || "");
-      if (rowId === requestId && st !== "\u8ee2\u8a18\u6e08" && st !== "\u51e6\u7406\u4e2d") {
+      if (rowId === requestId && st !== "転記済" && st !== "処理中...") {
         targetRows.push({ rowIndex: i + 1, rowData: allData[i] });
       }
     }
 
-    if (targetRows.length === 0) { Logger.log("No target rows: " + requestId); return; }
+    if (targetRows.length === 0) {
+      return { success: false, message: "対象行が見つかりません（すでに転記済みの可能性があります）。" };
+    }
 
-    // \u5168\u884c\u3092\u300c\u51e6\u7406\u4e2d\u300d\u306b\uff08\u4e8c\u91cd\u5b9f\u884c\u9632\u6b62\uff09
-    targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, "\u51e6\u7406\u4e2d..."));
+    // 二重実行防止
+    targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, "処理中..."));
 
-    const first = targetRows[0].rowData;
+    const first        = targetRows[0].rowData;
     const shopName     = String(first[PENDING_COL.shopName  - 1] || "");
     const creatorId    = String(first[PENDING_COL.creatorId - 1] || "");
     const realName     = String(first[PENDING_COL.realName  - 1] || "");
-    const addrCheck    = String(first[PENDING_COL.addrCheck - 1] || "");
     const userId       = String(first[PENDING_COL.userId    - 1] || "");
     const groupId      = String(first[PENDING_COL.groupId   - 1] || "");
     const shopSheetUrl = String(first[PENDING_COL.shopUrl   - 1] || "");
+
+    // 店舗発送シートURLチェック
+    if (!shopSheetUrl || shopSheetUrl.trim() === "" || shopSheetUrl === "null") {
+      const errMsg = "《要対応》店舗発送シートURL未設定（P列確認）";
+      targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, errMsg));
+      return { success: false, message: "店舗シートURLが設定されていません。承認待ちシートのP列を確認してください。" };
+    }
 
     const products = targetRows.map(r => ({
       name:      String(r.rowData[PENDING_COL.prodName   - 1] || ""),
@@ -257,70 +259,51 @@ function processApprovedRequest(ss, pendingSheet, requestId) {
       details:   String(r.rowData[PENDING_COL.prodDetail - 1] || "")
     }));
 
-    // \u4f4f\u6240\u691c\u7d22
-    const addressConfirmed = addrCheck.includes("\u5909\u66f4\u306a\u3057");
-    const addressResult    = lookupAddress(ss, creatorId, realName, addressConfirmed);
-
-    if (!addressResult.isFound) {
-      const errMsg = "\u300e\u8981\u5bfe\u5fdc\u300f" + addressResult.address;
-      targetRows.forEach(r => {
-        updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
-        pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false);
-      });
-      Logger.log("Address not found: " + errMsg);
-      return;
-    }
-
-    // \u5e97\u8217\u767a\u9001\u30b7\u30fc\u30c8URL\u30c1\u30a7\u30c3\u30af
-    if (!shopSheetUrl || shopSheetUrl.trim() === "" || shopSheetUrl === "null") {
-      const errMsg = "\u300e\u8981\u5bfe\u5fdc\u300f\u5e97\u8217\u767a\u9001\u30b7\u30fc\u30c8URL\u672a\u8a2d\u5b9a\uff08F\u5217\u78ba\u8a8d\uff09";
-      targetRows.forEach(r => {
-        updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
-        pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false);
-      });
-      Logger.log("No shop sheet URL: " + shopName);
-      return;
-    }
-
     const data = {
       shopName, shopNotifyGroupId: groupId, shopSheetUrl,
-      creatorId, realName, address: addressResult.address,
+      creatorId, realName, address: selectedAddress,
       userId, requestId, products
     };
 
-    // \u5e97\u8217\u5916\u90e8\u767a\u9001\u30b7\u30fc\u30c8\u3078\u8ee2\u8a18
+    // 店舗外部発送シートへ転記
     const shopWriteRes = appendToShopExternalSheet(shopSheetUrl, data);
     if (!shopWriteRes || !shopWriteRes.success) {
-      const errMsg = "\u300e\u8981\u5bfe\u5fdc\u300f\u5e97\u8217\u30b7\u30fc\u30c8\u66f8\u304d\u8fbc\u307f\u5931\u6557\uff08\u6a29\u9650/URL\u78ba\u8a8d\uff09";
-      targetRows.forEach(r => {
-        updatePendingStatus(pendingSheet, r.rowIndex, errMsg);
-        pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(false);
-      });
-      Logger.log("Shop sheet write failed: " + (shopWriteRes ? shopWriteRes.error : "unknown"));
-      return;
+      const errMsg = "《要対応》店舗シート書き込み失敗（権限/URL確認）";
+      targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, errMsg));
+      return { success: false, message: "店舗シートへの書き込みに失敗しました。権限やURLを確認してください。\n詳細: " + (shopWriteRes ? shopWriteRes.error : "不明") };
     }
 
-    // \u5e97\u8217LINE\u30b0\u30eb\u30fc\u30d7\u3078\u767a\u9001\u4f9d\u983c\u901a\u77e5
+    // 店舗LINEグループへ発送依頼通知
     notifyShopGroup(data, shopWriteRes.rowText);
 
-    // \u627f\u8a8d\u65e5\u6642\u30fb\u30ea\u30de\u30a4\u30f3\u30c9\u4e88\u5b9a\u65e5\u3092\u8a18\u9332\u3057\u3066\u300c\u8ee2\u8a18\u6e08\u300d\u306b\u66f4\u65b0
-    const approvedAt    = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
-    const reminderDate  = new Date();
+    // 承認日時・リマインド予定日を記録して「転記済」に更新
+    const approvedAt     = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
+    const reminderDate   = new Date();
     reminderDate.setDate(reminderDate.getDate() + cfg.REMINDER_DAYS);
     const reminderDateStr = Utilities.formatDate(reminderDate, "Asia/Tokyo", "yyyy/MM/dd");
 
     targetRows.forEach(r => {
-      pendingSheet.getRange(r.rowIndex, PENDING_COL.approvedAt).setValue(approvedAt);       // N: 承認日時
-      pendingSheet.getRange(r.rowIndex, PENDING_COL.remindDate).setValue(reminderDateStr);   // Q: リマインド予定日
-      pendingSheet.getRange(r.rowIndex, PENDING_COL.remindSent).setValue("\u672a");          // R: リマインド送信済
-      updatePendingStatus(pendingSheet, r.rowIndex, "\u8ee2\u8a18\u6e08");
+      pendingSheet.getRange(r.rowIndex, PENDING_COL.approvedAt).setValue(approvedAt);    // N: 承認日時
+      pendingSheet.getRange(r.rowIndex, PENDING_COL.remindDate).setValue(reminderDateStr); // Q: リマインド予定日
+      pendingSheet.getRange(r.rowIndex, PENDING_COL.remindSent).setValue("未");           // R: リマインド送信済
+      pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(true);                // M: ✅承認（完了後にON）
+      updatePendingStatus(pendingSheet, r.rowIndex, "転記済");
     });
 
-    Logger.log("Approved: " + requestId + " / shop: " + shopWriteRes.rowText + " / remind: " + reminderDateStr);
+    Logger.log("executeApproval: " + requestId + " / shop: " + shopWriteRes.rowText + " / remind: " + reminderDateStr);
+    return {
+      success: true,
+      message: "✅ 転記・通知が完了しました！\n行: " + shopWriteRes.rowText + "\n住所: " + selectedAddress
+    };
 
   } finally {
     lock.releaseLock();
   }
+}
+
+// processApprovedRequest は executeApproval に統合しました（後方互換のためエイリアスを残す）
+function processApprovedRequest(ss, pendingSheet, requestId) {
+  Logger.log("processApprovedRequest: このメソッドは廃止予定です。executeApproval を使ってください。");
 }
 
 // =============================================
@@ -643,28 +626,32 @@ function checkAndSendReminders() {
 // \u4f4f\u6240\u30b7\u30fc\u30c8\u3092\u691c\u7d22\uff08\u52d5\u7684\u30d8\u30c3\u30c0\u30fc\u691c\u7d22\uff09
 // =============================================
 
+/**
+ * 住所シートから一致する住所を「全件」収集して返す
+ * @returns {{ isFound: boolean, address?: string, multiple?: boolean, candidates?: {label:string, address:string}[] }}
+ */
 function lookupAddress(ss, creatorId, realName, addressConfirmed) {
   if (!addressConfirmed) {
-    return { isFound: false, address: "\u4f4f\u6240\u5909\u66f4\u306e\u7533\u3057\u51fa\u3042\u308a\uff08\u500b\u5225\u30c1\u30e3\u30c3\u30c8\u5bfe\u5fdc\uff09" };
+    return { isFound: false, address: "住所変更の申し出あり（個別チャット対応）" };
   }
 
   const cfg = getConfig();
   let sheet = ss.getSheetByName(cfg.SHEET_NAME_ADDRESS);
-  if (!sheet) sheet = ss.getSheetByName("\u4f4f\u6240\u7ba1\u7406\u30b7\u30fc\u30c8");
-  if (!sheet) return { isFound: false, address: "\u4f4f\u6240\u30b7\u30fc\u30c8\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093" };
+  if (!sheet) sheet = ss.getSheetByName("住所管理シート");
+  if (!sheet) return { isFound: false, address: "住所シートが見つかりません" };
 
   const values = sheet.getDataRange().getValues();
-  if (values.length <= 1) return { isFound: false, address: "\u4f4f\u6240\u30c7\u30fc\u30bf\u306a\u3057" };
+  if (values.length <= 1) return { isFound: false, address: "住所データなし" };
 
   const headerRow = values[0];
-  let idCol=-1, nameCol=-1, zipCol=-1, addrCol=-1;
+  let idCol = -1, nameCol = -1, zipCol = -1, addrCol = -1;
 
   for (let c = 0; c < headerRow.length; c++) {
     const h = String(headerRow[c] || "").replace(/[\s\u3000]/g, "").toLowerCase();
-    if      (idCol   === -1 && (h === "id" || h.includes("id") || h.includes("\u30a2\u30ab\u30a6\u30f3\u30c8"))) idCol   = c;
-    else if (nameCol === -1 && (h === "\u540d\u524d" || h === "\u6c0f\u540d" || h.includes("\u30af\u30ea\u30a8\u30a4\u30bf\u30fc\u540d")))               nameCol = c;
-    else if (zipCol  === -1 && (h === "\u90f5\u4fbf\u756a\u53f7" || h.includes("\u3012") || h.includes("\u90f5\u4fbf")))             zipCol  = c;
-    else if (addrCol === -1 && (h === "\u4f4f\u6240" || h.includes("\u304a\u5c4a\u3051\u5148")))                       addrCol = c;
+    if      (idCol   === -1 && (h === "id" || h.includes("id") || h.includes("アカウント"))) idCol   = c;
+    else if (nameCol === -1 && (h === "名前" || h === "氏名" || h.includes("クリエイター名"))) nameCol = c;
+    else if (zipCol  === -1 && (h === "郵便番号" || h.includes("〒") || h.includes("郵便")))  zipCol  = c;
+    else if (addrCol === -1 && (h === "住所" || h.includes("お届け先")))                       addrCol = c;
   }
 
   if (idCol   === -1) idCol   = 3;
@@ -675,24 +662,36 @@ function lookupAddress(ss, creatorId, realName, addressConfirmed) {
   const targetId   = String(creatorId || "").trim().toLowerCase().replace(/^@/, "");
   const targetName = String(realName  || "").trim().replace(/[\s\u3000]/g, "");
 
+  const candidates = [];
+
   for (let i = 1; i < values.length; i++) {
     const rowId   = String(values[i][idCol]   || "").trim().toLowerCase().replace(/^@/, "");
     const rowName = String(values[i][nameCol] || "").trim().replace(/[\s\u3000]/g, "");
-    if (!(targetId && rowId && rowId === targetId) &&
-        !(targetName && rowName && rowName === targetName)) continue;
+    const matched = (targetId   && rowId   && rowId   === targetId) ||
+                    (targetName && rowName && rowName === targetName);
+    if (!matched) continue;
 
     const rawZip  = String(values[i][zipCol]  || "").trim();
     const rawAddr = String(values[i][addrCol] || "").trim();
-    if (!rawAddr && !rawZip) return { isFound: false, address: "\u30b7\u30fc\u30c8\u306b\u767b\u9332\u306f\u3042\u308b\u304c\u4f4f\u6240\u304c\u7a7a\u6b04" };
+    if (!rawAddr && !rawZip) continue; // 住所が空の行はスキップ
 
     let fullAddress = rawAddr;
     if (rawZip && !rawAddr.includes(rawZip)) {
-      fullAddress = (rawZip.startsWith("\u3012") ? rawZip : "\u3012" + rawZip) + " " + rawAddr;
+      fullAddress = (rawZip.startsWith("〒") ? rawZip : "〒" + rawZip) + " " + rawAddr;
     }
-    return { isFound: true, address: fullAddress.trim() };
+    // ラベル（表示名）はシート行番号付きで区別できるようにする
+    const displayName = String(values[i][nameCol] || "").trim() || creatorId || "不明";
+    candidates.push({ label: displayName + "（" + (i + 1) + "行目）", address: fullAddress.trim() });
   }
 
-  return { isFound: false, address: "\u30b7\u30fc\u30c8\u672a\u767b\u9332\uff08\u500b\u4eba\u30c1\u30e3\u30c3\u30c8\u3067\u78ba\u8a8d\uff09" };
+  if (candidates.length === 0) {
+    return { isFound: false, address: "シート未登録（個人チャットで確認）" };
+  }
+  if (candidates.length === 1) {
+    return { isFound: true, address: candidates[0].address };
+  }
+  // 複数ヒット → 選択が必要
+  return { isFound: true, multiple: true, candidates: candidates };
 }
 
 // =============================================
@@ -969,3 +968,185 @@ function createJsonResponse(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+// =============================================
+// カスタムメニュー（スプレッドシートを開いたとき）
+// =============================================
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("発送システム")
+    .addItem("✅ 選択行を承認する", "approveSelectedRow")
+    .addSeparator()
+    .addItem("承認待ちシートを整形", "formatPendingSheet")
+    .addToUi();
+}
+
+// =============================================
+// メニューから承認する（住所1件 or 複数で分岐）
+// =============================================
+
+/**
+ * 「発送システム」→「選択行を承認する」から呼ばれる。
+ * 承認待ちシートで選択中の行を対象に住所を検索し、
+ * 1件なら確認ダイアログ → そのまま処理。
+ * 複数件なら住所選択ポップアップを表示。
+ */
+function approveSelectedRow() {
+  const ui  = SpreadsheetApp.getUi();
+  const ss  = getSpreadsheet();
+  const cfg = getConfig();
+
+  // ① 承認待ちシートが開かれているか確認
+  const activeSheet = SpreadsheetApp.getActiveSheet();
+  if (activeSheet.getName() !== cfg.SHEET_NAME_PENDING) {
+    ui.alert("エラー", "承認待ちシートを開いた状態で実行してください。", ui.ButtonSet.OK);
+    return;
+  }
+
+  // ② 選択行のバリデーション
+  const row = SpreadsheetApp.getActiveRange().getRow();
+  if (row <= 1) {
+    ui.alert("エラー", "ヘッダー行は承認できません。データ行を選択してください。", ui.ButtonSet.OK);
+    return;
+  }
+
+  const rowData   = activeSheet.getRange(row, 1, 1, 18).getValues()[0];
+  const requestId = String(rowData[PENDING_COL.reqId    - 1] || "");
+  const status    = String(rowData[PENDING_COL.status   - 1] || "");
+  const creatorId = String(rowData[PENDING_COL.creatorId - 1] || "");
+  const realName  = String(rowData[PENDING_COL.realName  - 1] || "");
+  const addrCheck = String(rowData[PENDING_COL.addrCheck - 1] || "");
+
+  if (!requestId) {
+    ui.alert("エラー", "この行にはデータがありません。", ui.ButtonSet.OK);
+    return;
+  }
+  if (status === "転記済") {
+    ui.alert("確認", "この行はすでに転記済みです。", ui.ButtonSet.OK);
+    return;
+  }
+  if (status === "処理中...") {
+    ui.alert("確認", "この行は現在処理中です。しばらく待ってから再試行してください。", ui.ButtonSet.OK);
+    return;
+  }
+
+  // ③ 住所シートを検索
+  const addressConfirmed = addrCheck.includes("変更なし");
+  const addressResult    = lookupAddress(ss, creatorId, realName, addressConfirmed);
+
+  if (!addressResult.isFound) {
+    ui.alert("住所が見つかりません", addressResult.address + "\n\n住所シートを確認するか、個別チャットで住所を取得してください。", ui.ButtonSet.OK);
+    return;
+  }
+
+  // ④-A 住所が1件 → 確認ダイアログを出してそのまま処理
+  if (!addressResult.multiple) {
+    const ans = ui.alert(
+      "承認の確認",
+      "以下の住所で転記・LINE通知を行います。よろしいですか？\n\n" + addressResult.address,
+      ui.ButtonSet.YES_NO
+    );
+    if (ans !== ui.Button.YES) return;
+
+    const result = executeApproval(ss, activeSheet, requestId, addressResult.address);
+    ui.alert(result.success ? "✅ 完了" : "❌ エラー", result.message, ui.ButtonSet.OK);
+    return;
+  }
+
+  // ④-B 住所が複数 → 選択ポップアップを表示
+  showAddressPickerDialog(requestId, addressResult.candidates);
+}
+
+// =============================================
+// 住所選択ポップアップ（複数候補ヒット時）
+// =============================================
+
+/** HTMLエスケープ用ヘルパー */
+function htmlEscape(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * 住所候補をラジオボタンで選ばせるモーダルダイアログを表示する。
+ * 選択後にダイアログ内のJSが google.script.run.doFinalApproval() を呼ぶ。
+ */
+function showAddressPickerDialog(requestId, candidates) {
+  // 候補データをHTMLに直接埋め込む（ScriptPropertiesなし）
+  const candidatesJson = JSON.stringify(candidates);
+
+  const optionsHtml = candidates.map((c, i) =>
+    '<label style="display:block;margin:10px 0;cursor:pointer;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;" ' +
+    'onmouseover="this.style.background=\'#eff6ff\'" onmouseout="this.style.background=\'#fff\'">' +
+    '<input type="radio" name="addr" value="' + i + '" style="margin-right:8px;">' +
+    '<strong style="font-size:13px;">' + htmlEscape(c.label) + '</strong><br>' +
+    '<span style="color:#555;font-size:12px;padding-left:20px;display:block;margin-top:2px;">' + htmlEscape(c.address) + '</span>' +
+    '</label>'
+  ).join("");
+
+  const html = HtmlService.createHtmlOutput(
+    '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    '<style>' +
+    'body{font-family:-apple-system,sans-serif;font-size:14px;padding:16px;margin:0;color:#1e293b;}' +
+    'h3{margin:0 0 8px;font-size:15px;color:#1e3a8a;}' +
+    'p{margin:0 0 12px;color:#475569;font-size:13px;}' +
+    '.btns{margin-top:16px;display:flex;gap:8px;}' +
+    'button{padding:9px 20px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:600;}' +
+    '.ok{background:#1d4ed8;color:#fff;} .ok:hover{background:#1e40af;}' +
+    '.cancel{background:#e2e8f0;color:#334155;} .cancel:hover{background:#cbd5e1;}' +
+    '</style></head><body>' +
+    '<h3>🏠 発送先の住所を選択してください</h3>' +
+    '<p>この申請者の住所が' + candidates.length + '件登録されています。<br>どちらに発送しますか？</p>' +
+    '<div id="opts">' + optionsHtml + '</div>' +
+    '<div class="btns">' +
+    '<button class="ok" onclick="submit()">この住所で承認する</button>' +
+    '<button class="cancel" onclick="google.script.host.close()">キャンセル</button>' +
+    '</div>' +
+    '<p id="msg" style="color:#ef4444;font-size:12px;margin-top:8px;"></p>' +
+    '<script>' +
+    'var CANDIDATES = ' + candidatesJson + ';' +
+    'function submit() {' +
+    '  var sel = document.querySelector("input[name=addr]:checked");' +
+    '  if (!sel) { document.getElementById("msg").textContent = "住所を選択してください。"; return; }' +
+    '  var idx = parseInt(sel.value);' +
+    '  var addr = CANDIDATES[idx].address;' +
+    '  document.querySelectorAll("button").forEach(function(b){b.disabled=true;});' +
+    '  document.getElementById("msg").style.color = "#64748b";' +
+    '  document.getElementById("msg").textContent = "処理中...";' +
+    '  google.script.run' +
+    '    .withSuccessHandler(function(res){' +
+    '      alert(res.message);' +
+    '      google.script.host.close();' +
+    '    })' +
+    '    .withFailureHandler(function(e){' +
+    '      alert("エラー: " + e.message);' +
+    '      document.querySelectorAll("button").forEach(function(b){b.disabled=false;});' +
+    '      document.getElementById("msg").textContent = "";' +
+    '    })' +
+    '    .doFinalApproval("' + requestId + '", addr);' +
+    '}' +
+    '<\/script>' +
+    '</body></html>'
+  ).setWidth(500).setHeight(360);
+
+  SpreadsheetApp.getUi().showModalDialog(html, "住所を選択して承認");
+}
+
+/**
+ * 住所選択ポップアップから呼ばれる。選択した住所文字列を直接受け取って承認処理を実行する。
+ * @param {string} requestId
+ * @param {string} selectedAddress  ユーザーが選んだ住所の文字列
+ * @returns {{ success: boolean, message: string }}
+ */
+function doFinalApproval(requestId, selectedAddress) {
+  const ss          = getSpreadsheet();
+  const cfg         = getConfig();
+  const pendingSheet = ss.getSheetByName(cfg.SHEET_NAME_PENDING);
+  if (!pendingSheet) return { success: false, message: "エラー: 承認待ちシートが見つかりません。" };
+  return executeApproval(ss, pendingSheet, requestId, selectedAddress);
+}
+
