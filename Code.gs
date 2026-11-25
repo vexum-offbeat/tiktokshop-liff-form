@@ -205,6 +205,8 @@ var PENDING_COL = {
 
 /**
  * 承認処理の本体。住所が確定した後に呼ばれる。
+ * 各行のC列（ブランド名）をもとに「店舗発送依頼先情報」タブのJ列を検索し、
+ * F列（「発送シート」列）のURLを取得して外部スプレッドシートへ転記する。
  * @param {Spreadsheet} ss
  * @param {Sheet} pendingSheet
  * @param {string} requestId
@@ -234,66 +236,110 @@ function executeApproval(ss, pendingSheet, requestId, selectedAddress) {
       return { success: false, message: "対象行が見つかりません（すでに転記済みの可能性があります）。" };
     }
 
+    // 転記前に全行の発送シートURLを「店舗発送依頼先情報」タブ（J列→F列）から解決・検証
+    const missingBrands = [];
+    const resolvedItems = targetRows.map(r => {
+      const brandName = String(r.rowData[PENDING_COL.shopName - 1] || "").trim();
+      const shopInfo  = resolveShopInfoByName(ss, brandName);
+      const url       = shopInfo && shopInfo.shopSheetUrl ? shopInfo.shopSheetUrl : "";
+      if (!url) {
+        missingBrands.push({ rowIndex: r.rowIndex, brandName: brandName || "（未入力）" });
+      }
+      return { row: r, brandName: brandName, shopInfo: shopInfo, shopSheetUrl: url };
+    });
+
+    if (missingBrands.length > 0) {
+      const errMsg = "《要対応》発送シート未特定（店舗発送依頼先情報のJ列・F列確認）";
+      missingBrands.forEach(m => updatePendingStatus(pendingSheet, m.rowIndex, errMsg));
+      const names = [...new Set(missingBrands.map(m => m.brandName))].join(", ");
+      return {
+        success: false,
+        message: "店舗の発送シートが見つかりませんでした。\n「" + cfg.SHEET_NAME_SHOP_MASTER + "」タブのJ列（ブランド名）とF列（発送シートリンク）を確認してください。\n\n対象ブランド: " + names
+      };
+    }
+
     // 二重実行防止
     targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, "処理中..."));
 
-    const first        = targetRows[0].rowData;
-    const shopName     = String(first[PENDING_COL.shopName  - 1] || "");
-    const creatorId    = String(first[PENDING_COL.creatorId - 1] || "");
-    const realName     = String(first[PENDING_COL.realName  - 1] || "");
-    const userId       = String(first[PENDING_COL.userId    - 1] || "");
-    const groupId      = String(first[PENDING_COL.groupId   - 1] || "");
-    const shopSheetUrl = String(first[PENDING_COL.shopUrl   - 1] || "");
+    // 同じ発送シートURLごとにグループ化して転記（1申請に複数ブランドが混在しても正しく振り分け）
+    const groupsMap = {};
+    resolvedItems.forEach(item => {
+      const key = item.shopSheetUrl;
+      if (!groupsMap[key]) groupsMap[key] = [];
+      groupsMap[key].push(item);
+    });
 
-    // 店舗発送シートURLチェック
-    if (!shopSheetUrl || shopSheetUrl.trim() === "" || shopSheetUrl === "null") {
-      const errMsg = "《要対応》店舗発送シートURL未設定（P列確認）";
-      targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, errMsg));
-      return { success: false, message: "店舗シートURLが設定されていません。承認待ちシートのP列を確認してください。" };
-    }
-
-    const products = targetRows.map(r => ({
-      name:      String(r.rowData[PENDING_COL.prodName   - 1] || ""),
-      url:       String(r.rowData[PENDING_COL.prodUrl    - 1] || ""),
-      variation: String(r.rowData[PENDING_COL.prodVar    - 1] || ""),
-      details:   String(r.rowData[PENDING_COL.prodDetail - 1] || "")
-    }));
-
-    const data = {
-      shopName, shopNotifyGroupId: groupId, shopSheetUrl,
-      creatorId, realName, address: selectedAddress,
-      userId, requestId, products
-    };
-
-    // 店舗外部発送シートへ転記
-    const shopWriteRes = appendToShopExternalSheet(shopSheetUrl, data);
-    if (!shopWriteRes || !shopWriteRes.success) {
-      const errMsg = "《要対応》店舗シート書き込み失敗（権限/URL確認）";
-      targetRows.forEach(r => updatePendingStatus(pendingSheet, r.rowIndex, errMsg));
-      return { success: false, message: "店舗シートへの書き込みに失敗しました。権限やURLを確認してください。\n詳細: " + (shopWriteRes ? shopWriteRes.error : "不明") };
-    }
-
-    // 店舗LINEグループへ発送依頼通知
-    notifyShopGroup(data, shopWriteRes.rowText);
-
-    // 承認日時・リマインド予定日を記録して「転記済」に更新
-    const approvedAt     = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
-    const reminderDate   = new Date();
+    const approvedAt      = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
+    const reminderDate    = new Date();
     reminderDate.setDate(reminderDate.getDate() + cfg.REMINDER_DAYS);
     const reminderDateStr = Utilities.formatDate(reminderDate, "Asia/Tokyo", "yyyy/MM/dd");
 
-    targetRows.forEach(r => {
-      pendingSheet.getRange(r.rowIndex, PENDING_COL.approvedAt).setValue(approvedAt);    // N: 承認日時
-      pendingSheet.getRange(r.rowIndex, PENDING_COL.remindDate).setValue(reminderDateStr); // Q: リマインド予定日
-      pendingSheet.getRange(r.rowIndex, PENDING_COL.remindSent).setValue("未");           // R: リマインド送信済
-      pendingSheet.getRange(r.rowIndex, cfg.APPROVAL_COL).setValue(true);                // M: ✅承認（完了後にON）
-      updatePendingStatus(pendingSheet, r.rowIndex, "転記済");
+    const resultsSummary = [];
+    const failedMessages = [];
+
+    Object.keys(groupsMap).forEach(shopSheetUrl => {
+      const groupItems = groupsMap[shopSheetUrl];
+      const firstRow   = groupItems[0].row.rowData;
+      const firstInfo  = groupItems[0].shopInfo;
+
+      const shopName  = [...new Set(groupItems.map(it => it.brandName).filter(Boolean))].join(" / ");
+      const creatorId = String(firstRow[PENDING_COL.creatorId - 1] || "");
+      const realName  = String(firstRow[PENDING_COL.realName  - 1] || "");
+      const userId    = String(firstRow[PENDING_COL.userId    - 1] || "");
+      const groupId   = (firstInfo && firstInfo.notifyGroupId) || String(firstRow[PENDING_COL.groupId - 1] || "");
+
+      const products = groupItems.map(it => ({
+        name:      String(it.row.rowData[PENDING_COL.prodName   - 1] || ""),
+        url:       String(it.row.rowData[PENDING_COL.prodUrl    - 1] || ""),
+        variation: String(it.row.rowData[PENDING_COL.prodVar    - 1] || ""),
+        details:   String(it.row.rowData[PENDING_COL.prodDetail - 1] || "")
+      }));
+
+      const data = {
+        shopName, shopNotifyGroupId: groupId, shopSheetUrl,
+        creatorId, realName, address: selectedAddress,
+        userId, requestId, products
+      };
+
+      // 店舗外部発送シートへ転記
+      const shopWriteRes = appendToShopExternalSheet(shopSheetUrl, data);
+      if (!shopWriteRes || !shopWriteRes.success) {
+        const errMsg = "《要対応》店舗シート書き込み失敗（権限/URL確認）";
+        groupItems.forEach(it => updatePendingStatus(pendingSheet, it.row.rowIndex, errMsg));
+        failedMessages.push("[" + shopName + "] " + (shopWriteRes ? shopWriteRes.error : "書き込み失敗"));
+        return;
+      }
+
+      // 店舗LINEグループへ発送依頼通知
+      notifyShopGroup(data, shopWriteRes.rowText);
+
+      // 承認日時・リマインド予定日・取得した発送シートURLを記録して「転記済」に更新
+      groupItems.forEach(it => {
+        const idx = it.row.rowIndex;
+        pendingSheet.getRange(idx, PENDING_COL.approvedAt).setValue(approvedAt);    // N: 承認日時
+        pendingSheet.getRange(idx, PENDING_COL.shopUrl).setValue(shopSheetUrl);     // P: 発送シートURL（記録用）
+        pendingSheet.getRange(idx, PENDING_COL.remindDate).setValue(reminderDateStr); // Q: リマインド予定日
+        pendingSheet.getRange(idx, PENDING_COL.remindSent).setValue("未");           // R: リマインド送信済
+        pendingSheet.getRange(idx, cfg.APPROVAL_COL).setValue(true);                // M: ✅承認（完了後にON）
+        updatePendingStatus(pendingSheet, idx, "転記済");
+      });
+
+      resultsSummary.push("[" + shopName + "] " + shopWriteRes.rowText);
+      Logger.log("executeApproval: " + requestId + " / brand: " + shopName + " / shop: " + shopWriteRes.rowText + " / remind: " + reminderDateStr);
     });
 
-    Logger.log("executeApproval: " + requestId + " / shop: " + shopWriteRes.rowText + " / remind: " + reminderDateStr);
+    if (failedMessages.length > 0) {
+      return {
+        success: false,
+        message: "一部の店舗シートへの書き込みに失敗しました。権限やURLを確認してください。\n" +
+                 failedMessages.join("\n") +
+                 (resultsSummary.length > 0 ? "\n\n成功分:\n" + resultsSummary.join("\n") : "")
+      };
+    }
+
     return {
       success: true,
-      message: "✅ 転記・通知が完了しました！\n行: " + shopWriteRes.rowText + "\n住所: " + selectedAddress
+      message: "✅ 転記・通知が完了しました！\n" + resultsSummary.join("\n") + "\n住所: " + selectedAddress
     };
 
   } finally {
@@ -379,9 +425,9 @@ function appendPendingRecords(ss, data) {
     let rowGroupId  = data.shopNotifyGroupId || data.groupId || "";
 
     if (p.brand) {
+      rowShopName = p.brand; // クリエイターが選んだブランド名をそのままC列に残す
       const info = resolveShopInfoByName(ss, p.brand);
       if (info) {
-        rowShopName = info.shopName;
         if (info.shopSheetUrl)  rowShopUrl = info.shopSheetUrl;
         if (info.notifyGroupId) rowGroupId = info.notifyGroupId;
       }
@@ -699,11 +745,13 @@ function lookupAddress(ss, creatorId, realName, addressConfirmed) {
 // =============================================
 
 /**
- * ブランド名（店舗名）から発送先マスタを検索して店舗情報（発送シートURL等）を取得
+ * ブランド名（承認待ちシートC列）から「店舗発送依頼先情報」タブのJ列を検索し、
+ * 「発送シート」列（F列）にあるスプレッドシートURL等の店舗情報を取得する。
+ * J列は "A\B\C" / "A\\B\\C" のようなバックスラッシュ区切りの複数ブランド表記に対応。
  */
 function resolveShopInfoByName(ss, brandName) {
-  if (!brandName || !brandName.trim()) return null;
-  const target = brandName.trim();
+  if (!brandName || !String(brandName).trim()) return null;
+  const target = String(brandName).trim();
   const cfg = getConfig();
   let masterSheet = ss.getSheetByName(cfg.SHEET_NAME_SHOP_MASTER) || ss.getSheetByName("\u5e97\u8217\u30de\u30b9\u30bf");
   if (!masterSheet) return null;
@@ -711,14 +759,49 @@ function resolveShopInfoByName(ss, brandName) {
   const lastRow = masterSheet.getLastRow();
   if (lastRow <= 1) return null;
 
-  const values = masterSheet.getRange(1, 1, lastRow, Math.max(masterSheet.getLastColumn(), 7)).getValues();
+  // 1行目のヘッダーから「発送シート」列を特定（見つからなければデフォルトF列=index 5）
+  const maxCols = Math.max(masterSheet.getLastColumn(), 10);
+  const values  = masterSheet.getRange(1, 1, lastRow, maxCols).getValues();
+  const header  = values[0] || [];
+
+  let urlColIndex = -1;
+  for (let c = 0; c < header.length; c++) {
+    const h = String(header[c] || "").replace(/[\s\u3000]/g, "");
+    if (h === "発送シート") {
+      urlColIndex = c;
+      break;
+    }
+  }
+  if (urlColIndex === -1) {
+    for (let c = 0; c < header.length; c++) {
+      const h = String(header[c] || "").replace(/[\s\u3000]/g, "");
+      if (h.includes("発送シート")) {
+        urlColIndex = c;
+        break;
+      }
+    }
+  }
+  if (urlColIndex === -1) urlColIndex = 5; // デフォルト F列（0始まりで5）
+
+  const brandColIndex = 9; // J列（0始まりで9）
+  const normalize = s => String(s || "").replace(/[\s\u3000]/g, "").toLowerCase();
+  const targetNorm = normalize(target);
+
   for (let i = 1; i < values.length; i++) {
-    const rowShop = String(values[i][0] || "").trim(); // A列: ショップ名
-    if (rowShop && (rowShop === target || rowShop.includes(target) || target.includes(rowShop))) {
-      const shopSheetUrl = extractUrlFromCell(masterSheet.getRange(i + 1, 6)); // F列: 発送シートURL
-      const notifyGroupId = String(values[i][1] || "").trim(); // B列: 依頼グループ
+    const rawBrands = String(values[i][brandColIndex] || "").trim();
+    if (!rawBrands) continue;
+
+    // "\" / "\\" / "￥" / "＼" で分割して比較
+    const tokens = rawBrands.split(/[\\￥＼]+/).map(s => s.trim()).filter(Boolean);
+    const isMatched = tokens.some(t => normalize(t) === targetNorm);
+
+    if (isMatched) {
+      const shopSheetUrl = extractUrlFromCell(masterSheet.getRange(i + 1, urlColIndex + 1));
+      const rawGroup = String(values[i][1] || "").trim(); // B列: 依頼グループ
+      const notifyGroupId = /^[CR][0-9a-f]{32}$/i.test(rawGroup) ? rawGroup : "";
       return {
-        shopName: rowShop,
+        shopName: target,
+        sheetShopName: String(values[i][0] || "").trim(),
         shopSheetUrl: shopSheetUrl,
         notifyGroupId: notifyGroupId
       };
@@ -1013,6 +1096,7 @@ function approveSelectedRow() {
 
   const rowData   = activeSheet.getRange(row, 1, 1, 18).getValues()[0];
   const requestId = String(rowData[PENDING_COL.reqId    - 1] || "");
+  const brandName = String(rowData[PENDING_COL.shopName - 1] || "").trim();
   const status    = String(rowData[PENDING_COL.status   - 1] || "");
   const creatorId = String(rowData[PENDING_COL.creatorId - 1] || "");
   const realName  = String(rowData[PENDING_COL.realName  - 1] || "");
@@ -1031,7 +1115,19 @@ function approveSelectedRow() {
     return;
   }
 
-  // ③ 住所シートを検索
+  // ③ 「店舗発送依頼先情報」タブのJ列→F列（発送シート）から転記先が解決できるか事前確認
+  const previewShop = resolveShopInfoByName(ss, brandName);
+  if (!previewShop || !previewShop.shopSheetUrl) {
+    ui.alert(
+      "発送シートが見つかりません",
+      "ブランド「" + (brandName || "未入力") + "」に対応する発送シートリンクが見つかりませんでした。\n\n" +
+      "「" + cfg.SHEET_NAME_SHOP_MASTER + "」タブのJ列（ブランド名）とF列（発送シート）のリンクを確認してください。",
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+
+  // ④ 住所シートを検索
   const addressConfirmed = addrCheck.includes("変更なし");
   const addressResult    = lookupAddress(ss, creatorId, realName, addressConfirmed);
 
@@ -1040,11 +1136,16 @@ function approveSelectedRow() {
     return;
   }
 
-  // ④-A 住所が1件 → 確認ダイアログを出してそのまま処理
+  // ⑤-A 住所が1件 → 確認ダイアログを出してそのまま処理
   if (!addressResult.multiple) {
+    const shopLabel = previewShop.sheetShopName
+      ? brandName + "（発送先: " + previewShop.sheetShopName + "）"
+      : brandName;
     const ans = ui.alert(
       "承認の確認",
-      "以下の住所で転記・LINE通知を行います。よろしいですか？\n\n" + addressResult.address,
+      "以下の内容で転記・LINE通知を行います。よろしいですか？\n\n" +
+      "■ ブランド: " + shopLabel + "\n" +
+      "■ お届け先: " + addressResult.address,
       ui.ButtonSet.YES_NO
     );
     if (ans !== ui.Button.YES) return;
@@ -1054,7 +1155,7 @@ function approveSelectedRow() {
     return;
   }
 
-  // ④-B 住所が複数 → 選択ポップアップを表示
+  // ⑤-B 住所が複数 → 選択ポップアップを表示
   showAddressPickerDialog(requestId, addressResult.candidates);
 }
 
