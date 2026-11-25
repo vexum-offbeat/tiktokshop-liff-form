@@ -17,7 +17,9 @@
 // SHEET_NAME_ADDRESS      住所一覧シートのタブ名            クリエイター・代理店サンプルリスト
 // SHEET_NAME_SHOP_MASTER  店舗マスタのタブ名               店舗発送依頼先情報
 // APPROVAL_COL            承認チェックボックスの列番号      13（M列）
-// REMINDER_DAYS           発送依頼からリマインドまでの日数  5
+// REMINDER_DAYS           承認から初回リマインドまでの日数  5
+// AFFILIATE_REMINDER_INTERVAL_DAYS  2回目以降の間隔（日）    7
+// AFFILIATE_REMINDER_MAX_SENDS      初回を含む送信上限       3
 // ====================================================================
 
 function getConfig() {
@@ -31,7 +33,9 @@ function getConfig() {
     SHEET_NAME_SHOP_MASTER:    props.getProperty("SHEET_NAME_SHOP_MASTER") || "\u5e97\u8217\u767a\u9001\u4f9d\u983c\u5148\u60c5\u5831",
     AFFILIATE_INFO_TEXT:       props.getProperty("AFFILIATE_URL")          || "",
     APPROVAL_COL:              Number(props.getProperty("APPROVAL_COL"))   || 13,
-    REMINDER_DAYS:             Number(props.getProperty("REMINDER_DAYS"))  || 5
+    REMINDER_DAYS:             positiveReminderSetting_(props.getProperty("REMINDER_DAYS"), 5),
+    AFFILIATE_REMINDER_INTERVAL_DAYS: positiveReminderSetting_(props.getProperty("AFFILIATE_REMINDER_INTERVAL_DAYS"), 7),
+    AFFILIATE_REMINDER_MAX_SENDS: positiveReminderSetting_(props.getProperty("AFFILIATE_REMINDER_MAX_SENDS"), 3)
   };
 }
 
@@ -54,7 +58,9 @@ function initializeScriptProperties() {
     "SHEET_NAME_ADDRESS":    "\u30af\u30ea\u30a8\u30a4\u30bf\u30fc\u30fb\u4ee3\u7406\u5e97\u30b5\u30f3\u30d7\u30eb\u30ea\u30b9\u30c8",
     "SHEET_NAME_SHOP_MASTER":"\u5e97\u8217\u767a\u9001\u4f9d\u983c\u5148\u60c5\u5831",
     "APPROVAL_COL":          "13",
-    "REMINDER_DAYS":         "5"
+    "REMINDER_DAYS":         "5",
+    "AFFILIATE_REMINDER_INTERVAL_DAYS": "7",
+    "AFFILIATE_REMINDER_MAX_SENDS": "3"
   };
 
   const toSet = {}, skipped = [], added = [];
@@ -112,6 +118,73 @@ function doGet(e) {
   return html;
 }
 
+function canonicalTikTokProductUrl_(value) {
+  const text = String(value || "").trim();
+  if (/[\s\\]/.test(text)) return "";
+  const standard = text.match(/^https:\/\/(?:www\.|shop\.)?tiktok\.com\/view\/product\/(\d{10,25})\/?(?:[?#].*)?$/i);
+  const pdp = text.match(/^https:\/\/shop\.tiktok\.com\/(?:jp\/)?pdp\/(?:[^/?#]+\/)?(\d{10,25})\/?(?:[?#].*)?$/i);
+  const match = standard || pdp;
+  return match ? "https://shop.tiktok.com/view/product/" + match[1] + "?region=JP" : "";
+}
+
+function affiliateTikTokUrl_(value) {
+  const text = String(value || "").trim();
+  if (text.length > 2000 || /[\s\\]/.test(text)) return "";
+  const sharedUrl = /^https:\/\/(?:(?:affiliate(?:-[a-z]{2})?\.tiktok\.com\/api\/v1\/share\/)|(?:(?:vt|vm)\.tiktok\.com\/)|(?:(?:www\.)?tiktok\.com\/t\/))[a-z0-9_-]+\/?(?:[?#].*)?$/i;
+  return sharedUrl.test(text) ? text : "";
+}
+
+function resolveTikTokProductLink_(value) {
+  const url = canonicalTikTokProductUrl_(value);
+  const affiliateUrl = affiliateTikTokUrl_(value);
+  if (url || !affiliateUrl) return { url, affiliateUrl };
+
+  const visited = new Set();
+  let current = affiliateUrl.split("#")[0];
+  try {
+    while (current && !visited.has(current) && visited.size < 5) {
+      visited.add(current);
+      const response = UrlFetchApp.fetch(current, {
+        followRedirects: false,
+        muteHttpExceptions: true,
+        timeoutSeconds: 8
+      });
+      const status = response.getResponseCode();
+      if (![301, 302, 303, 307, 308].includes(status)) break;
+      const headers = response.getAllHeaders();
+      const locationKey = Object.keys(headers).find(key => key.toLowerCase() === "location");
+      const header = headers[locationKey];
+      let location = String(Array.isArray(header) ? header[0] : header || "").trim();
+      if (location.startsWith("//")) {
+        location = "https:" + location;
+      } else if (location.startsWith("/")) {
+        location = current.match(/^https:\/\/[^/]+/i)[0] + location;
+      }
+      if (/^snssdk\d+:\/\/lynxview\?/i.test(location)) {
+        const match = location.match(/[?&]product_url=([^&#]+)/i);
+        location = match ? decodeURIComponent(match[1]) : "";
+      }
+      const productUrl = canonicalTikTokProductUrl_(location);
+      if (productUrl) return { url: productUrl, affiliateUrl };
+      current = affiliateTikTokUrl_(location).split("#")[0];
+    }
+  } catch (err) {
+    Logger.log("TikTokの商品リンク変換に失敗しました。");
+  }
+  return { url: "", affiliateUrl };
+}
+
+function manufacturerText_(value) {
+  // 商品リンクは別欄から設定するため、共有URLを貼り付けられる自由入力欄はテキストだけにする。
+  return String(value || "")
+    .replace(/(?:https?:\/\/|(?:[a-z0-9-]+\.)*tiktok\.com(?=[/:?#]|$))[^\s<>"'、。！？（）]*/gi, "")
+    .trim();
+}
+
+function sheetLiteral_(value) {
+  return typeof value === "string" && /^\s*=/.test(value) ? "'" + value : value;
+}
+
 function submitShippingRequest(data) { return processRequestData(data); }
 
 function doPost(e) {
@@ -141,11 +214,29 @@ function processRequestData(data) {
                       + "-" + Math.floor(Math.random() * 1000);
     data.requestId = requestId;
 
-    // クリエイターDBに永久保存（バックアップ）
-    appendCreatorDB(ss, data);
+    const submittedProducts = Array.isArray(data.products) && data.products.length ? data.products : [{
+      name: data.productName || "指定なし",
+      url: data.productUrl || "",
+      brand: data.shopName,
+      variation: data.productVariation || data.productColor,
+      details: data.productDetails
+    }];
+    const resolvedLinks = new Map();
+    data.products = submittedProducts.map(product => {
+      const suppliedUrl = String(product.url || "").trim();
+      if (!resolvedLinks.has(suppliedUrl)) resolvedLinks.set(suppliedUrl, resolveTikTokProductLink_(suppliedUrl));
+      return { ...product, ...resolvedLinks.get(suppliedUrl), suppliedUrl };
+    });
 
-    // 承認待ちシートに書き込んで止まる
-    appendPendingRecords(ss, data);
+    const pendingLock = LockService.getScriptLock();
+    pendingLock.waitLock(10000);
+    try {
+      appendPendingRecords(ss, data);
+      appendCreatorDB(ss, data);
+      SpreadsheetApp.flush();
+    } finally {
+      pendingLock.releaseLock();
+    }
 
     // 住所未確認の場合、フォーム送信直後にクリエイターへLINE自動送信
     if (!data.addressConfirmed) {
@@ -194,13 +285,14 @@ function onApprovalEdit(e) {
  * A: 受付日時       B: 管理番号       C: 店舗名         D: クリエイターID  E: 氏名
  * F: 住所確認       G: 商品名         H: 商品リンク     I: 希望バリエ     J: 商品詳細
  * K: LINE_USER_ID  L: LINE_GROUP_ID  M: ✅承認         N: 承認日時       O: ステータス
- * P: 発送シートURL  Q: リマインド予定日  R: リマインド送信済
+ * P: 発送シートURL  Q: 次回リマインド予定日  R: リマインド状態
+ * S: アフィリエイトリンク（社内用） T: リマインド送信回数 U: LINE送信試行
  */
 var PENDING_COL = {
   recvAt:1, reqId:2, shopName:3, creatorId:4, realName:5, addrCheck:6,
   prodName:7, prodUrl:8, prodVar:9, prodDetail:10,
   userId:11, groupId:12, approval:13, approvedAt:14, status:15,
-  shopUrl:16, remindDate:17, remindSent:18
+  shopUrl:16, remindDate:17, remindSent:18, affiliateUrl:19, remindCount:20, remindAttempt:21
 };
 
 /**
@@ -234,6 +326,32 @@ function executeApproval(ss, pendingSheet, requestId, selectedAddress) {
 
     if (targetRows.length === 0) {
       return { success: false, message: "対象行が見つかりません（すでに転記済みの可能性があります）。" };
+    }
+
+    ensurePendingLinkColumns_(pendingSheet);
+    const unresolvedRows = [];
+    targetRows.forEach(row => {
+      const suppliedUrl = String(row.rowData[PENDING_COL.prodUrl - 1] || "").trim();
+      const storedAffiliate = affiliateTikTokUrl_(row.rowData[PENDING_COL.affiliateUrl - 1]);
+      const existingProductUrl = canonicalTikTokProductUrl_(suppliedUrl);
+      const resolved = existingProductUrl
+        ? { url: existingProductUrl, affiliateUrl: storedAffiliate }
+        : resolveTikTokProductLink_(affiliateTikTokUrl_(suppliedUrl) || storedAffiliate);
+
+      row.productUrl = resolved.url;
+      if (resolved.affiliateUrl && resolved.affiliateUrl !== storedAffiliate) {
+        pendingSheet.getRange(row.rowIndex, PENDING_COL.affiliateUrl).setValue(resolved.affiliateUrl);
+      }
+      if (resolved.url || affiliateTikTokUrl_(suppliedUrl)) {
+        pendingSheet.getRange(row.rowIndex, PENDING_COL.prodUrl).setValue(resolved.url);
+      }
+      if (!row.productUrl) {
+        updatePendingStatus(pendingSheet, row.rowIndex, "《要対応》商品リンク要確認");
+        unresolvedRows.push(row.rowIndex);
+      }
+    });
+    if (unresolvedRows.length) {
+      return { success: false, message: "商品リンクを確認できないため転記を保留しました。承認待ちシートのH列にTikTok Shopの商品URLを入力して再承認してください。対象行: " + unresolvedRows.join(", ") };
     }
 
     // 転記前に全行の発送シートURLを「店舗発送依頼先情報」タブ（J列→F列）から解決・検証
@@ -282,22 +400,22 @@ function executeApproval(ss, pendingSheet, requestId, selectedAddress) {
       const firstRow   = groupItems[0].row.rowData;
       const firstInfo  = groupItems[0].shopInfo;
 
-      const shopName  = [...new Set(groupItems.map(it => it.brandName).filter(Boolean))].join(" / ");
-      const creatorId = String(firstRow[PENDING_COL.creatorId - 1] || "");
-      const realName  = String(firstRow[PENDING_COL.realName  - 1] || "");
+      const shopName  = manufacturerText_([...new Set(groupItems.map(it => it.brandName).filter(Boolean))].join(" / "));
+      const creatorId = manufacturerText_(firstRow[PENDING_COL.creatorId - 1]);
+      const realName  = manufacturerText_(firstRow[PENDING_COL.realName - 1]);
       const userId    = String(firstRow[PENDING_COL.userId    - 1] || "");
       const groupId   = (firstInfo && firstInfo.notifyGroupId) || String(firstRow[PENDING_COL.groupId - 1] || "");
 
       const products = groupItems.map(it => ({
-        name:      String(it.row.rowData[PENDING_COL.prodName   - 1] || ""),
-        url:       String(it.row.rowData[PENDING_COL.prodUrl    - 1] || ""),
-        variation: String(it.row.rowData[PENDING_COL.prodVar    - 1] || ""),
-        details:   String(it.row.rowData[PENDING_COL.prodDetail - 1] || "")
+        name:      manufacturerText_(it.row.rowData[PENDING_COL.prodName - 1]),
+        url:       it.row.productUrl,
+        variation: manufacturerText_(it.row.rowData[PENDING_COL.prodVar - 1]),
+        details:   manufacturerText_(it.row.rowData[PENDING_COL.prodDetail - 1])
       }));
 
       const data = {
         shopName, shopNotifyGroupId: groupId, shopSheetUrl,
-        creatorId, realName, address: selectedAddress,
+        creatorId, realName, address: manufacturerText_(selectedAddress),
         userId, requestId, products,
         approvedAt: approvedAt  // 承認日時（yyyy/MM/dd HH:mm）
       };
@@ -382,7 +500,7 @@ function appendCreatorDB(ss, data) {
       data.realName              || "",
       p.name                     || "",
       p.brand                    || data.shopName || "",
-      p.url                      || ""
+      sheetLiteral_(p.suppliedUrl || p.url || "")
     ]);
   });
 }
@@ -396,7 +514,7 @@ function appendCreatorDB(ss, data) {
  * 列: A:受付日時 B:管理番号 C:店舗名 D:クリエイターID E:氏名 F:住所確認
  *     G:商品名 H:商品リンク I:希望バリエーション J:商品詳細
  *     K:LINE_USER_ID L:LINE_GROUP_ID M:✅承認 N:承認日時 O:ステータス P:発送シートURL
- *     Q:リマインド予定日 R:リマインド送信済
+ *     Q:次回リマインド予定日 R:リマインド状態 S:アフィリエイトリンク T:リマインド送信回数
  */
 function appendPendingRecords(ss, data) {
   const cfg = getConfig();
@@ -409,18 +527,9 @@ function appendPendingRecords(ss, data) {
   const now       = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd HH:mm");
   const checkText = data.addressConfirmed ? "\u5909\u66f4\u306a\u3057" : "\u5909\u66f4\u3042\u308a/\u521d\u56de";
 
-  let products = data.products;
-  if (!products || !Array.isArray(products) || products.length === 0) {
-    products = [{
-      name:      data.productName      || "\u6307\u5b9a\u306a\u3057",
-      url:       data.productUrl       || "",
-      brand:     data.shopName         || "",
-      variation: data.productVariation || data.productColor || "-",
-      details:   data.productDetails   || "-"
-    }];
-  }
+  ensurePendingLinkColumns_(sheet);
 
-  products.forEach(p => {
+  data.products.forEach(p => {
     let rowShopName = p.brand || data.shopName;
     let rowShopUrl  = data.shopSheetUrl || "";
     let rowGroupId  = data.shopNotifyGroupId || data.groupId || "";
@@ -442,22 +551,27 @@ function appendPendingRecords(ss, data) {
       data.realName,                                    // E: 氏名
       checkText,                                        // F: 住所確認
       p.name,                                           // G: 商品名
-      p.url       || "-",                               // H: 商品リンク
+      p.url       || "",                                // H: 商品リンク
       p.variation || "-",                               // I: 希望バリエーション
       p.details   || "-",                               // J: 商品詳細
       data.userId                           || "",      // K: LINE_USER_ID
       rowGroupId,                                       // L: LINE_GROUP_ID
       false,                                            // M: ✅承認
       "",                                               // N: 承認日時
-      "\u53d7\u4ed8\u4e2d",                             // O: ステータス
+      p.url ? "受付中" : "《要対応》商品リンク要確認",       // O: ステータス
       rowShopUrl,                                       // P: 発送シートURL
       "",                                               // Q: リマインド予定日
-      ""                                                // R: リマインド送信済
+      "",                                               // R: リマインド状態
+      p.affiliateUrl || "",                             // S: アフィリエイトリンク
+      "",                                               // T: リマインド送信回数
+      ""                                                // U: LINE送信試行
     ];
 
     // A列（受付日時）が空いている最初の行を確実に探して書き込む
     const targetRow = findFirstEmptyRowInPending(sheet);
-    sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
+    if (targetRow > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+    sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData.map(sheetLiteral_)]);
+    if (!p.url) updatePendingStatus(sheet, targetRow, "《要対応》商品リンク要確認");
     // 承認列のチェックボックスと書式を保証
     sheet.getRange(targetRow, PENDING_COL.approval).setDataValidation(
       SpreadsheetApp.newDataValidation().requireCheckbox().build()
@@ -476,6 +590,19 @@ function findFirstEmptyRowInPending(sheet) {
     }
   }
   return colA.length + 1;
+}
+
+function ensurePendingLinkColumns_(sheet) {
+  const required = PENDING_COL.remindAttempt;
+  const existing = sheet.getMaxColumns();
+  if (existing < required) sheet.insertColumnsAfter(existing, required - existing);
+  const headers = ["アフィリエイトリンク（社内用）", "リマインド送信回数", "LINE送信試行"];
+  const range = sheet.getRange(1, PENDING_COL.affiliateUrl, 1, headers.length);
+  const previous = range.getValues()[0];
+  if (previous.some((value, i) => value && value !== headers[i])) {
+    throw new Error("承認待ちシートのS〜U列に別の見出しがあります。既存データを確認してください。");
+  }
+  if (previous.some((value, i) => value !== headers[i])) range.setValues([headers]);
 }
 
 function updatePendingStatus(sheet, rowIndex, statusText) {
@@ -503,9 +630,10 @@ function formatPendingSheet() {
     "\u53d7\u4ed8\u65e5\u6642", "\u7ba1\u7406\u756a\u53f7", "\u5e97\u8217\u540d", "\u30af\u30ea\u30a8\u30a4\u30bf\u30fcID", "\u6c0f\u540d", "\u4f4f\u6240\u78ba\u8a8d",
     "\u5546\u54c1\u540d", "\u5546\u54c1\u30ea\u30f3\u30af", "\u5e0c\u671b\u30d0\u30ea\u30a8\u30fc\u30b7\u30e7\u30f3", "\u5546\u54c1\u8a73\u7d30\u30fb\u3054\u8981\u671b",
     "LINE_USER_ID", "LINE_GROUP_ID", "\u2705\u627f\u8a8d", "\u627f\u8a8d\u65e5\u6642", "\u30b9\u30c6\u30fc\u30bf\u30b9", "\u767a\u9001\u30b7\u30fc\u30c8URL",
-    "\u30ea\u30de\u30a4\u30f3\u30c9\u4e88\u5b9a\u65e5", "\u30ea\u30de\u30a4\u30f3\u30c9\u9001\u4fe1\u6e08"
+    "次回リマインド予定日", "リマインド状態", "アフィリエイトリンク（社内用）", "リマインド送信回数", "LINE送信試行"
   ];
 
+  ensurePendingLinkColumns_(sheet);
   // 1. 既存の有効データを行番号に関係なく救出（下のほうに飛んだデータも救済）
   const allValues = sheet.getDataRange().getValues();
   const validDataRows = [];
@@ -513,7 +641,7 @@ function formatPendingSheet() {
     const row = allValues[i];
     // A列(受付日時)またはB列(管理番号)が入っていれば有効データとみなす
     if ((row[0] && String(row[0]).trim()) || (row[1] && String(row[1]).trim())) {
-      validDataRows.push(row.slice(0, headers.length));
+      validDataRows.push(headers.map((_, col) => sheetLiteral_(row[col] ?? "")));
     }
   }
 
@@ -560,7 +688,10 @@ function formatPendingSheet() {
     15: 110, // O: ステータス
     16: 150, // P: 発送シートURL
     17: 120, // Q: リマインド予定日
-    18: 120  // R: リマインド送信済
+    18: 140, // R: リマインド状態
+    19: 240, // S: アフィリエイトリンク
+    20: 140, // T: リマインド送信回数
+    21: 120  // U: LINE送信試行
   };
   Object.keys(colWidths).forEach(c => {
     sheet.setColumnWidth(Number(c), colWidths[c]);
@@ -572,11 +703,11 @@ function formatPendingSheet() {
   sheet.getRange(2, 1, targetRowCount, headers.length).setVerticalAlignment("middle").setFontSize(10);
 
   // 中央揃え: A, B, F, K, L, M, N, O, Q, R
-  [1, 2, 6, 11, 12, 13, 14, 15, 17, 18].forEach(col => {
+  [1, 2, 6, 11, 12, 13, 14, 15, 17, 18, 20].forEach(col => {
     sheet.getRange(2, col, targetRowCount, 1).setHorizontalAlignment("center");
   });
   // 左揃え: C, D, E, G, H, I, J, P
-  [3, 4, 5, 7, 8, 9, 10, 16].forEach(col => {
+  [3, 4, 5, 7, 8, 9, 10, 16, 19].forEach(col => {
     sheet.getRange(2, col, targetRowCount, 1).setHorizontalAlignment("left");
   });
 
@@ -623,49 +754,82 @@ function setupApprovalTrigger() {
  * 承認待ちシートをスキャンし、リマインド予定日を過ぎた行のクリエイターへLINEリマインドを送信
  * GASのトリガーで毎日9〜10時に自動実行するよう設定する
  */
+function positiveReminderSetting_(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
 function checkAndSendReminders() {
-  const cfg   = getConfig();
-  const ss    = getSpreadsheet();
-  const sheet = ss.getSheetByName(cfg.SHEET_NAME_PENDING);
-  if (!sheet) { Logger.log("Pending sheet not found"); return; }
+  const cfg = getConfig();
+  const sheet = getSpreadsheet().getSheetByName(cfg.SHEET_NAME_PENDING);
+  if (!sheet) return;
 
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return;
+  try {
+    ensurePendingLinkColumns_(sheet);
+    const rows = sheet.getDataRange().getValues();
+    const now = new Date();
+    const today = Utilities.formatDate(now, "Asia/Tokyo", "yyyy/MM/dd");
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+    for (let index = 1; index < rows.length; index++) {
+      const row = rows[index];
+      const state = String(row[PENDING_COL.remindSent - 1] || "");
+      const status = row[PENDING_COL.status - 1];
+      const due = row[PENDING_COL.remindDate - 1];
+      const userId = String(row[PENDING_COL.userId - 1] || "").trim();
+      if (status !== "転記済" || !due || !/^U[0-9a-f]{32}$/i.test(userId) ||
+          state === "停止" || state === "送信結果要確認" || state.startsWith("送信済")) continue;
 
-  for (let i = 1; i < data.length; i++) {
-    const status      = String(data[i][PENDING_COL.status     - 1] || "");
-    const remindDate  =        data[i][PENDING_COL.remindDate - 1];
-    const remindSent  = String(data[i][PENDING_COL.remindSent - 1] || "");
-    const userId      = String(data[i][PENDING_COL.userId     - 1] || "");
-    const productName = String(data[i][PENDING_COL.prodName   - 1] || "");
+      const date = due instanceof Date ? due : new Date(due);
+      if (Number.isNaN(date.getTime()) || today < Utilities.formatDate(date, "Asia/Tokyo", "yyyy/MM/dd")) continue;
 
-    if (status !== "\u8ee2\u8a18\u6e08")   continue;
-    if (remindSent === "\u9001\u4fe1\u6e08" || remindSent.startsWith("\u9001\u4fe1\u6e08")) continue;
-    if (!remindDate || !userId) continue;
+      const productName = String(row[PENDING_COL.prodName - 1] || "サンプル");
+      const affiliateUrl = affiliateTikTokUrl_(row[PENDING_COL.affiliateUrl - 1]) ||
+        affiliateTikTokUrl_(row[PENDING_COL.prodUrl - 1]);
+      const count = Number(row[PENDING_COL.remindCount - 1]) || 0;
+      const maxSends = affiliateUrl ? cfg.AFFILIATE_REMINDER_MAX_SENDS : 1;
+      if (count >= maxSends) continue;
 
-    const rDate = new Date(remindDate);
-    rDate.setHours(0, 0, 0, 0);
-    if (today < rDate) continue;
+      const link = affiliateUrl || cfg.AFFILIATE_INFO_TEXT;
+      const introduction = count === 0
+        ? "先日発送を手配したサンプル「" + productName + "」はお手元に届きましたでしょうか？"
+        : "「" + productName + "」のご紹介について、リマインドです。";
+      const remindText = "お世話になっております！\n" + introduction +
+        "\n\nTikTokライブでのご紹介日程が決まりましたら、このチャットで教えていただけますと幸いです。" +
+        (link ? "\n\nご紹介用のアフィリエイトリンク\n" + link : "");
 
-    const remindText =
-      "\u304a\u4e16\u8a71\u306b\u306a\u3063\u3066\u304a\u308a\u307e\u3059\uff01\n" +
-      "\u5148\u65e5\u767a\u9001\u3044\u305f\u3057\u307e\u3057\u305f\u30b5\u30f3\u30d7\u30eb\u300c" + productName + "\u300d\u306f\u304a\u624b\u5143\u306b\u5c4a\u304d\u307e\u3057\u305f\u3067\u3057\u3087\u3046\u304b\uff1f\u2728\n\n" +
-      "\u3010\u3054\u78ba\u8a8d\u306e\u304a\u9858\u3044\u3011\n" +
-      "\u2460 TikTok\u30e9\u30a4\u30d6\u3067\u306e\u3054\u7d39\u4ecb\u65e5\u7a0b\u304c\u304a\u6c7a\u307e\u308a\u3067\u3057\u305f\u3089\u3001\u672c\u30c1\u30e3\u30c3\u30c8\u306b\u3066\u6559\u3048\u3066\u3044\u305f\u3060\u3051\u307e\u3059\u3068\u5e78\u3044\u3067\u3059\uff01\n" +
-      "\u2461 \u3054\u7d39\u4ecb\u7528\u306e\u30a2\u30d5\u30a3\u30ea\u30a8\u30a4\u30c8\u30ea\u30f3\u30af\u306f\u4ee5\u4e0b\u3068\u306a\u308a\u307e\u3059\u3002\u5fc5\u305a\u3053\u3061\u3089\u3092\u3054\u6d3b\u7528\u304f\u3060\u3055\u3044\u307e\u305b\uff01\n" +
-      "\ud83d\udd17 " + cfg.AFFILIATE_INFO_TEXT + "\n\n" +
-      "\u5f15\u304d\u7d9a\u304d\u3088\u308d\u3057\u304f\u304a\u9858\u3044\u3044\u305f\u3057\u307e\u3059\uff01";
+      const rowIndex = index + 1;
+      const attemptCell = sheet.getRange(rowIndex, PENDING_COL.remindAttempt);
+      const stateCell = sheet.getRange(rowIndex, PENDING_COL.remindSent);
+      const attempt = String(row[PENDING_COL.remindAttempt - 1] || "");
+      let [startedAt, retryKey] = attempt.split("|");
+      if (retryKey && now.getTime() - Number(startedAt) >= 86400000) {
+        stateCell.setValue("送信結果要確認");
+        continue;
+      }
+      if (!retryKey) {
+        retryKey = Utilities.getUuid();
+        attemptCell.setValue(now.getTime() + "|" + retryKey);
+        SpreadsheetApp.flush();
+      }
+      const statusCode = pushLineMessage(userId, remindText, retryKey);
+      if (statusCode < 200 || statusCode >= 300) {
+        if (statusCode !== 0 && statusCode < 500) attemptCell.clearContent();
+        stateCell.setValue("送信失敗（次回確認）");
+        continue;
+      }
 
-    pushLineMessage(userId, remindText);
-
-    sheet.getRange(i + 1, PENDING_COL.remindSent).setValue(
-      "\u9001\u4fe1\u6e08 (" + Utilities.formatDate(today, "Asia/Tokyo", "MM/dd") + ")"
-    );
-
-    Logger.log("Reminder sent: row " + (i + 1) + " / " + productName);
+      const sentCount = count + 1;
+      const nextDate = new Date(now.getTime() + cfg.AFFILIATE_REMINDER_INTERVAL_DAYS * 86400000);
+      const nextDue = sentCount < maxSends ? Utilities.formatDate(nextDate, "Asia/Tokyo", "yyyy/MM/dd") : "";
+      const sentState = (nextDue ? "次回送信予定" : "送信済") + " (" +
+        Utilities.formatDate(now, "Asia/Tokyo", "MM/dd") + ")";
+      sheet.getRange(rowIndex, PENDING_COL.remindDate, 1, 5).setValues([[nextDue, sentState, affiliateUrl, sentCount, ""]]);
+      SpreadsheetApp.flush();
+    }
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -936,6 +1100,7 @@ function detectShopSheetColumns(headerRow) {
   if (!headerRow || !headerRow.length) return cols;
 
   let fallbackDateCol = -1;
+  let fallbackUrlCol = -1;
   headerRow.forEach((h, c) => {
     const hh = String(h || "").replace(/[\s\u3000]/g, "").toLowerCase();
     if (!hh) return;
@@ -948,8 +1113,10 @@ function detectShopSheetColumns(headerRow) {
       cols.dateCol = c;
       return;
     }
-    if (cols.urlCol === -1 && (hh.includes("url") || hh.includes("リンク"))) {
-      cols.urlCol = c;
+    if (hh.includes("url") || hh.includes("リンク")) {
+      if (/アフィ|affiliate|紹介|宣伝/.test(hh)) return;
+      if (cols.urlCol === -1 && /商品|product/.test(hh)) cols.urlCol = c;
+      if (fallbackUrlCol === -1 && /^(?:url|リンク)$/.test(hh)) fallbackUrlCol = c;
       return;
     }
     if (cols.detailCol === -1 && (hh.includes("備考") || hh.includes("詳細") || hh.includes("要望"))) {
@@ -986,6 +1153,7 @@ function detectShopSheetColumns(headerRow) {
   if (cols.dateCol === -1 && fallbackDateCol !== -1) {
     cols.dateCol = fallbackDateCol;
   }
+  if (cols.urlCol === -1) cols.urlCol = fallbackUrlCol;
   return cols;
 }
 
@@ -1028,13 +1196,18 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
 
     const cols = values.length >= 1 ? detectShopSheetColumns(values[0]) : detectShopSheetColumns([]);
     const hasMap = Object.keys(cols).some(k => cols[k] !== -1);
+    if (hasMap && cols.urlCol === -1) {
+      cols.urlCol = targetSheet.getLastColumn();
+      if (cols.urlCol >= targetSheet.getMaxColumns()) targetSheet.insertColumnsAfter(targetSheet.getMaxColumns(), 1);
+      targetSheet.getRange(1, cols.urlCol + 1).setValue("商品リンク");
+    }
     const maxMatchedCol = Math.max(
       cols.dateCol, cols.creatorCol, cols.nameCol, cols.addrCol,
       cols.prodCol, cols.urlCol, cols.varCol, cols.detailCol
     );
     const rowLen = Math.max(targetSheet.getLastColumn(), maxMatchedCol + 1, 1);
 
-    products.forEach(p => {
+    const outputRows = products.map(p => {
       if (hasMap) {
         const row = new Array(rowLen).fill("");
         if (cols.dateCol    !== -1) row[cols.dateCol]    = dateStr;
@@ -1045,11 +1218,18 @@ function appendToShopExternalSheet(shopSheetUrl, data) {
         if (cols.urlCol     !== -1) row[cols.urlCol]     = p.url          || "-";
         if (cols.varCol     !== -1) row[cols.varCol]     = p.variation    || "-";
         if (cols.detailCol  !== -1) row[cols.detailCol]  = p.details      || "-";
-        targetSheet.appendRow(row);
-      } else {
-        targetSheet.appendRow([dateStr, data.creatorId || "", data.realName || "", data.address || "", p.name || "", p.url || "-", p.variation || "-", p.details || "-"]);
+        return row.map(sheetLiteral_);
       }
+      return [dateStr, data.creatorId || "", data.realName || "", data.address || "", p.name || "", p.url || "-", p.variation || "-", p.details || "-"].map(sheetLiteral_);
     });
+    const outputEnd = startRow + outputRows.length - 1;
+    if (outputEnd > targetSheet.getMaxRows()) {
+      targetSheet.insertRowsAfter(targetSheet.getMaxRows(), outputEnd - targetSheet.getMaxRows());
+    }
+    if (outputRows[0].length > targetSheet.getMaxColumns()) {
+      targetSheet.insertColumnsAfter(targetSheet.getMaxColumns(), outputRows[0].length - targetSheet.getMaxColumns());
+    }
+    targetSheet.getRange(startRow, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
 
     const endRow = targetSheet.getLastRow();
     // 転記先の列が元々yyyy/MM/dd形式等にフォーマットされていても「10/10」形式で表示されるようにする
@@ -1135,21 +1315,30 @@ function fetchLineGroupName(groupId) {
   return null;
 }
 
-function pushLineMessage(toId, text) {
+function pushLineMessage(toId, text, retryKey) {
   const token = getConfig().LINE_CHANNEL_ACCESS_TOKEN;
   if (!token) {
     Logger.log("pushLineMessage SKIPPED: LINE_CHANNEL_TOKEN is empty");
-    return;
+    return -1;
   }
   try {
+    const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + token };
+    if (retryKey) headers["X-Line-Retry-Key"] = retryKey;
     const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
       method: "post",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+      headers,
       payload: JSON.stringify({ to: toId, messages: [{ type: "text", text: text }] }),
       muteHttpExceptions: true
     });
-    Logger.log("pushLineMessage to " + toId + " -> status: " + res.getResponseCode() + " / body: " + res.getContentText());
-  } catch (e) { Logger.log("Push error: " + e.toString()); }
+    const status = res.getResponseCode();
+    Logger.log("LINE push status: " + status);
+    if (status === 409 && retryKey &&
+        Object.keys(res.getAllHeaders()).some(key => key.toLowerCase() === "x-line-accepted-request-id")) return 200;
+    return status;
+  } catch (e) {
+    Logger.log("LINE push failed");
+    return 0;
+  }
 }
 
 function createJsonResponse(obj) {
@@ -1199,7 +1388,7 @@ function approveSelectedRow() {
     return;
   }
 
-  const rowData   = activeSheet.getRange(row, 1, 1, 18).getValues()[0];
+  const rowData   = activeSheet.getRange(row, 1, 1, PENDING_COL.remindSent).getValues()[0];
   const requestId = String(rowData[PENDING_COL.reqId    - 1] || "");
   const brandName = String(rowData[PENDING_COL.shopName - 1] || "").trim();
   const status    = String(rowData[PENDING_COL.status   - 1] || "");
